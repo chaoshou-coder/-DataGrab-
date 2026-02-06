@@ -1,6 +1,7 @@
 # 计划：根下独立包，simplerig 可忽略
 /simplerig/
 .simplerig/
+simplerig_data/
 
 # Python
 __pycache__/
@@ -16,6 +17,10 @@ build/
 *.parquet
 *.csv
 sample/
+.pytest_cache/
+.ruff_cache/
+tests/
+
 
 # 环境
 .venv/

@@ -13,7 +13,7 @@ import polars as pl
 
 from ..fsutils import atomic_write_text
 from ..logging import get_logger
-from ..timeutils import to_beijing
+from ..timeutils import beijing_now, parse_date, to_beijing
 from .writer import ParquetWriter
 from ..sources.base import DataSource
 
@@ -204,12 +204,16 @@ class Downloader:
         with path.open("r", encoding="utf-8") as f:
             reader = csv.DictReader(f)
             for row in reader:
+                start_str = row.get("start", "").strip()
+                end_str = row.get("end", "").strip()
+                start = parse_date(start_str) if start_str else (beijing_now() - timedelta(days=365))
+                end = parse_date(end_str) if end_str else beijing_now()
                 tasks.append(
                     DownloadTask(
                         symbol=row["symbol"],
                         interval=row["interval"],
-                        start=datetime.fromisoformat(row["start"]),
-                        end=datetime.fromisoformat(row["end"]),
+                        start=start,
+                        end=end,
                         asset_type=row.get("asset_type", "stock"),
                         adjust=row.get("adjust", "auto"),
                     )

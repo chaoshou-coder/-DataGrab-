@@ -48,6 +48,7 @@ class CatalogScreen(Screen):
             yield Input(placeholder="数量上限（空=默认）", id="limit")
             with Horizontal():
                 yield Button("加载目录", id="load")
+                yield Button("刷新目录", id="refresh")
                 yield Button("使用目录前N", id="use-top")
                 yield Button("下一步", id="next")
                 yield Button("返回", id="back")
@@ -57,22 +58,9 @@ class CatalogScreen(Screen):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "load":
-            include_filt = self.query_one("#include_filter", Input).value.strip()
-            exclude_filt = self.query_one("#exclude_filter", Input).value.strip()
-            include_exchange = self.query_one("#include_exchange", Input).value.strip()
-            exclude_exchange = self.query_one("#exclude_exchange", Input).value.strip()
-            include_market = self.query_one("#include_market", Input).value.strip()
-            exclude_market = self.query_one("#exclude_market", Input).value.strip()
-            limit = self._limit()
-            self.load_catalog(
-                include_filt,
-                exclude_filt,
-                include_exchange,
-                exclude_exchange,
-                include_market,
-                exclude_market,
-                limit,
-            )
+            self._do_load_catalog(refresh=False)
+        if event.button.id == "refresh":
+            self._do_load_catalog(refresh=True)
         if event.button.id == "use-top":
             symbols = [item.symbol for item in self.items][: self._limit()]
             self.query_one("#symbols", Input).value = ",".join(symbols)
@@ -86,6 +74,25 @@ class CatalogScreen(Screen):
             self.app.push_screen(ConfigScreen())
         if event.button.id == "back":
             self.app.pop_screen()
+
+    def _do_load_catalog(self, refresh: bool) -> None:
+        include_filt = self.query_one("#include_filter", Input).value.strip()
+        exclude_filt = self.query_one("#exclude_filter", Input).value.strip()
+        include_exchange = self.query_one("#include_exchange", Input).value.strip()
+        exclude_exchange = self.query_one("#exclude_exchange", Input).value.strip()
+        include_market = self.query_one("#include_market", Input).value.strip()
+        exclude_market = self.query_one("#exclude_market", Input).value.strip()
+        limit = self._limit()
+        self.load_catalog(
+            include_filt,
+            exclude_filt,
+            include_exchange,
+            exclude_exchange,
+            include_market,
+            exclude_market,
+            limit,
+            refresh=refresh,
+        )
 
     def _limit(self) -> int:
         limit_value = self.query_one("#limit", Input).value.strip()
@@ -106,9 +113,10 @@ class CatalogScreen(Screen):
         include_market: str,
         exclude_market: str,
         limit: int,
+        refresh: bool = False,
     ) -> None:
         asset_type = self.app.state.asset_type
-        items = self.app.source.list_symbols(asset_type=asset_type, refresh=False, limit=limit)
+        items = self.app.source.list_symbols(asset_type=asset_type, refresh=refresh, limit=limit)
         if include_filt or exclude_filt:
             items = self._apply_text_filters(items, include_filt, exclude_filt)
         if include_exchange or exclude_exchange or include_market or exclude_market:
