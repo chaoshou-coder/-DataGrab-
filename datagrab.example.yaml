@@ -1,0 +1,49 @@
+rate_limit:
+  requests_per_second: 2.0
+  jitter_min: 0.2
+  jitter_max: 0.6
+
+baostock:
+  # A股复权方式：back(后复权)/front(前复权)/none(不复权)
+  adjust_default: "back"
+
+filters:
+  # Symbol regex filters
+  include_regex: ["^A"]
+  exclude_regex: ["TEST"]
+
+  # Symbol prefix filters
+  include_prefixes: []
+  exclude_prefixes: []
+
+  # Explicit symbol allow/deny
+  include_symbols: ["AAPL", "MSFT"]
+  exclude_symbols: []
+
+  # Name regex filters
+  include_name_regex: []
+  exclude_name_regex: ["ETF"]
+
+  # Exchange filters
+  # NASDAQ/NYSE for common listings, or A/N/P/Z/V for otherlisted.txt codes
+  include_exchanges: ["NASDAQ"]
+  exclude_exchanges: []
+
+  # Market category filters (Nasdaq listed):
+  # Q = Global Select, G = Global Market, S = Capital Market
+  # A股: MAIN/STAR/CHINEXT/B/BSE
+  include_market_categories: ["Q", "G"]
+  exclude_market_categories: []
+
+  # ETF filter: true = only ETF, false = exclude ETF, null = ignore
+  only_etf: null
+
+  # Fund filter: true = only fund, false = exclude fund, null = ignore
+  only_fund: null
+
+  # Fund category filters: ETF/LOF/REIT/QDII/MONEY/BOND/ETF_LINK/GRADED/FUND
+  # 支持中文别名：ETF联接/分级/货币/债券/基金/REITs
+  include_fund_categories: []
+  exclude_fund_categories: []
+
+# asset_types: ["stock", "ashare", "forex", "crypto", "commodity"]

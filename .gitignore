@@ -1,0 +1,34 @@
+# 计划：根下独立包，simplerig 可忽略
+/simplerig/
+.simplerig/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+
+# 数据与缓存
+/data/
+*.parquet
+*.csv
+sample/
+
+# 环境
+.venv/
+venv/
+.env
+
+# IDE 与本地
+.idea/
+.vscode/
+*.swp
+*.swo
+.cursor/
+.simplerig/
+sample/get_data.py
+sample/get_all_symbol.py
+config.yaml

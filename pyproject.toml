@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "datagrab"
+version = "0.1.0"
+description = "财采 (DataGrab): 多市场财经数据采集，支持美股/A股、TUI与CLI、断点续传与增量更新"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "DataGrab Contributors" }]
+keywords = ["finance", "yahoo", "baostock", "ashare", "ohlcv", "parquet", "tui", "datagrab"]
+classifiers = [
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Office/Business :: Financial :: Investment",
+]
+
+[project.urls]
+Homepage = "https://github.com/chaoshou-coder/-DataGrab-"
+Repository = "https://github.com/chaoshou-coder/-DataGrab-"
+
+dependencies = [
+  "textual>=0.55.0",
+  "yfinance>=0.2.33",
+  "polars>=0.20.0",
+  "pyarrow>=14.0.0",
+  "httpx>=0.24.0",
+  "pyyaml>=6.0",
+  "rich>=13.7.0",
+  "numpy>=1.26.0",
+  "pandas>=2.0.0",
+  "baostock",
+  "tzdata>=2024.1"
+]
+
+[project.scripts]
+datagrab = "datagrab.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
