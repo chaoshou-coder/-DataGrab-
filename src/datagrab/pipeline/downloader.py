@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import csv
+import io
 import random
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable
@@ -41,9 +42,22 @@ class DownloadStats:
     active: int = 0
     failed: int = 0
     skipped: int = 0
+    recent_failures: list[FailureRecord] = field(default_factory=list)
 
 
 ProgressCallback = Callable[[DownloadStats], None]
+
+
+def _format_failure_reason(exc: Exception) -> str:
+    """格式化失败原因，保证即使异常消息为空也有可读信息。"""
+    name = type(exc).__name__
+    msg = str(exc).strip()
+    if not msg:
+        return name
+    # 避免重复 “ValueError: ValueError: ...”
+    if msg.startswith(f"{name}:"):
+        return msg
+    return f"{name}: {msg}"
 
 
 class Downloader:
@@ -61,6 +75,31 @@ class Downloader:
         self.batch_days = batch_days
         self.startup_jitter_max = startup_jitter_max
         self.logger = get_logger("datagrab.downloader")
+        # ── 运行控制 ──────────────────────────────────────────
+        self._cancel = threading.Event()   # set() → 取消
+        self._pause = threading.Event()    # clear() → 暂停, set() → 运行
+        self._pause.set()                  # 初始：运行
+
+    def pause(self) -> None:
+        """暂停下载（已在跑的任务完成当前文件后暂停）。"""
+        self._pause.clear()
+
+    def resume(self) -> None:
+        """恢复下载。"""
+        self._pause.set()
+
+    def cancel(self) -> None:
+        """取消下载（不可恢复）。"""
+        self._cancel.set()
+        self._pause.set()  # 唤醒可能正在等 pause 的线程，让它们检测到 cancel
+
+    @property
+    def is_paused(self) -> bool:
+        return not self._pause.is_set()
+
+    @property
+    def is_cancelled(self) -> bool:
+        return self._cancel.is_set()
 
     def build_tasks(
         self,
@@ -106,6 +145,13 @@ class Downloader:
 
         def worker(task: DownloadTask) -> None:
             nonlocal stats
+            # ── cancel check before start ──
+            if self._cancel.is_set():
+                return
+            # ── pause gate ──
+            self._pause.wait()
+            if self._cancel.is_set():
+                return
             if self.startup_jitter_max > 0:
                 time.sleep(random.uniform(0, self.startup_jitter_max))
             with lock:
@@ -117,9 +163,30 @@ class Downloader:
                     if status == "skipped":
                         stats.skipped += 1
             except Exception as exc:
+                if self._cancel.is_set():
+                    return
+                # 记录详细异常（含堆栈），避免 TUI/CLI 只能看到“失败=N”
+                self.logger.error(
+                    "download failed: asset_type=%s symbol=%s interval=%s start=%s end=%s adjust=%s err=%s",
+                    task.asset_type,
+                    task.symbol,
+                    task.interval,
+                    task.start.date(),
+                    task.end.date(),
+                    task.adjust,
+                    exc,
+                    exc_info=True,
+                )
                 with lock:
                     stats.failed += 1
-                    failures.append(FailureRecord(task=task, reason=str(exc)))
+                    record = FailureRecord(task=task, reason=_format_failure_reason(exc))
+                    failures.append(record)
+                    stats.recent_failures.append(record)
+                    # 保留最近 N 条，供 TUI 直观查看
+                    if len(stats.recent_failures) > 20:
+                        stats.recent_failures = stats.recent_failures[-20:]
+                    # 失败发生时也立即推送一次（不必等到 finally）
+                    update(stats)
             finally:
                 with lock:
                     stats.active -= 1
@@ -129,17 +196,25 @@ class Downloader:
         if not tasks:
             return failures
 
-        from concurrent.futures import ThreadPoolExecutor
+        from concurrent.futures import ThreadPoolExecutor, as_completed
 
         with ThreadPoolExecutor(max_workers=self.concurrency) as executor:
-            for task in tasks:
-                executor.submit(worker, task)
+            futures = [executor.submit(worker, task) for task in tasks]
+            # 等待全部完成或被取消
+            for f in as_completed(futures):
+                if self._cancel.is_set():
+                    break
 
         if failures:
             self._write_failures(failures_path, failures)
         return failures
 
     def _run_task(self, task: DownloadTask) -> str:
+        if self._cancel.is_set():
+            return "cancelled"
+        self._pause.wait()
+        if self._cancel.is_set():
+            return "cancelled"
         existing = self.writer.find_existing(task.asset_type, task.symbol, task.interval)
         existing_path = None
         existing_start = task.start
@@ -169,6 +244,11 @@ class Downloader:
         chunks = list(self._split_range(start, end))
         frames = []
         for chunk_start, chunk_end in chunks:
+            if self._cancel.is_set():
+                break
+            self._pause.wait()
+            if self._cancel.is_set():
+                break
             result = self.source.fetch_ohlcv(
                 task.symbol, task.interval, chunk_start, chunk_end, task.adjust
             )
@@ -188,14 +268,28 @@ class Downloader:
             current = chunk_end
 
     def _write_failures(self, path: Path, failures: list[FailureRecord]) -> None:
-        output = []
-        output.append("symbol,interval,start,end,asset_type,adjust,reason")
+        # 使用标准 CSV writer，避免 reason 含逗号/换行导致文件不可读
+        buf = io.StringIO()
+        writer = csv.DictWriter(
+            buf,
+            fieldnames=["symbol", "interval", "start", "end", "asset_type", "adjust", "reason"],
+            lineterminator="\n",
+        )
+        writer.writeheader()
         for failure in failures:
             t = failure.task
-            output.append(
-                f"{t.symbol},{t.interval},{t.start.date()},{t.end.date()},{t.asset_type},{t.adjust},{failure.reason}"
+            writer.writerow(
+                {
+                    "symbol": t.symbol,
+                    "interval": t.interval,
+                    "start": str(t.start.date()),
+                    "end": str(t.end.date()),
+                    "asset_type": t.asset_type,
+                    "adjust": t.adjust,
+                    "reason": failure.reason,
+                }
             )
-        atomic_write_text(path, "\n".join(output))
+        atomic_write_text(path, buf.getvalue())
 
     def _load_failures(self, path: Path) -> list[DownloadTask]:
         if not path.exists():

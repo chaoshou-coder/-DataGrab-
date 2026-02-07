@@ -16,11 +16,13 @@ REQUIRED = [
     Dependency("textual", "textual"),
     Dependency("yfinance", "yfinance"),
     Dependency("baostock", "baostock"),
+    Dependency("akshare", "akshare"),
     Dependency("polars", "polars"),
     Dependency("pyarrow", "pyarrow"),
     Dependency("httpx", "httpx"),
     Dependency("pyyaml", "yaml"),
     Dependency("rich", "rich"),
+    Dependency("numpy", "numpy"),
     Dependency("pandas", "pandas"),
 ]
 
@@ -31,7 +33,12 @@ def check_deps(auto_install: bool = False) -> list[str]:
         try:
             importlib.import_module(dep.import_name)
         except Exception:
-            missing.append(dep.package)
             if auto_install:
                 subprocess.run([sys.executable, "-m", "pip", "install", dep.package], check=False)
+                try:
+                    importlib.import_module(dep.import_name)
+                except Exception:
+                    missing.append(dep.package)
+            else:
+                missing.append(dep.package)
     return missing

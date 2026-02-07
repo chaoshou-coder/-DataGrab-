@@ -19,7 +19,7 @@
 ## 代码与文档
 
 - 新增功能请尽量补充测试与 README/文档说明。
-- 配置项、CLI 参数变更请在 `README.md` 与 `datagrab.example.yaml` 中体现。
+- 配置项、CLI 参数变更请在 `README.md`、`docs/USAGE.md` 与 `datagrab.example.yaml` 中体现，必要时同步 `docs/ARCHITECTURE.md`、`docs/TECHNICAL.md`。
 - 保持对 Python 3.11 的兼容性，避免使用过新语法。
 
 ## Issue

@@ -24,7 +24,7 @@ tests/
 
 
 # 环境
-.venv/
+*.venv/
 venv/
 .env
 

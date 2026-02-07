@@ -15,6 +15,8 @@ from .sources.baostock_source import BaostockDataSource
 from .sources.router import SourceRouter
 from .sources.yfinance_source import YFinanceDataSource
 from .storage.export import export_backtrader_csv, export_vectorbt_npz
+from .storage.quality import Severity, write_issues_csv, write_issues_jsonl
+from .storage.validate import BatchProgress, iter_parquet_files, validate_batch
 from .timeutils import DateRange, default_date_range, parse_date
 
 
@@ -27,9 +29,26 @@ def build_parser() -> argparse.ArgumentParser:
     tui_parser = subparsers.add_parser("tui", help="launch Textual TUI")
     tui_parser.add_argument("--asset-type", type=str, default="stock")
 
-    catalog_parser = subparsers.add_parser("catalog", help="fetch and cache catalog")
-    catalog_parser.add_argument("--asset-type", type=str, default="stock")
-    catalog_parser.add_argument("--refresh", action="store_true")
+    catalog_parser = subparsers.add_parser(
+        "catalog",
+        help="下载并缓存对应资产的 symbol 列表到本地 (data/catalog/<asset_type>_symbols.csv)；--refresh 表示联网拉取最新列表",
+    )
+    catalog_parser.add_argument(
+        "--asset-type",
+        type=str,
+        default="stock",
+        help="资产类型: stock(美股), ashare(A股), forex, crypto, commodity",
+    )
+    catalog_parser.add_argument(
+        "--refresh",
+        action="store_true",
+        help="联网拉取最新 symbol 列表并写入本地，不传则优先读本地缓存",
+    )
+    catalog_parser.add_argument(
+        "--refresh-all",
+        action="store_true",
+        help="与 --refresh 同时使用时，依次更新所有支持联网的资产类型 (stock, ashare)",
+    )
     catalog_parser.add_argument("--limit", type=int)
     _add_filter_args(catalog_parser)
 
@@ -53,6 +72,21 @@ def build_parser() -> argparse.ArgumentParser:
     export_parser.add_argument("--engine", choices=["vectorbt", "backtrader"], required=True)
     export_parser.add_argument("--input", required=True)
     export_parser.add_argument("--output", required=True)
+
+    validate_parser = subparsers.add_parser("validate", help="validate parquet data quality under data_root")
+    validate_parser.add_argument("--root", type=str, help="data root path (default: config.data_root_path)")
+    validate_parser.add_argument("--asset-type", type=str, help="asset type filter (e.g. stock/ashare)")
+    validate_parser.add_argument("--symbol", type=str, help="symbol filter (single symbol)")
+    validate_parser.add_argument("--interval", type=str, help="interval filter (e.g. 1d/5m)")
+    validate_parser.add_argument("--out", type=str, help="output issues file path (jsonl/csv)")
+    validate_parser.add_argument("--format", choices=["jsonl", "csv"], default="jsonl", help="issues output format")
+    validate_parser.add_argument("--summary", action="store_true", help="only print totals")
+    validate_parser.add_argument(
+        "--workers",
+        type=int,
+        default=None,
+        help="parallel worker threads (default: auto = cpu_count)",
+    )
 
     return parser
 
@@ -155,6 +189,75 @@ def main(argv: list[str] | None = None) -> None:
         logger.info("exported %s to %s", args.engine, output_path)
         return
 
+    if args.command == "validate":
+        root = Path(args.root).resolve() if getattr(args, "root", None) else config.data_root_path
+        asset_type = getattr(args, "asset_type", None)
+        symbol = getattr(args, "symbol", None)
+        interval = getattr(args, "interval", None)
+        out_path = Path(args.out).resolve() if getattr(args, "out", None) else None
+        out_format = getattr(args, "format", "jsonl")
+        only_summary = bool(getattr(args, "summary", False))
+        workers = getattr(args, "workers", None)
+
+        files = list(iter_parquet_files(root, asset_type=asset_type, symbol=symbol, interval=interval))
+        if not files:
+            logger.warning("no parquet files found under %s", root)
+            return
+
+        import os
+
+        effective_workers = workers or min(os.cpu_count() or 4, len(files), 32)
+        logger.info("validating %d files with %d workers", len(files), effective_workers)
+
+        error_files = 0
+        warn_files = 0
+
+        def _on_result(summary, file_issues, progress: BatchProgress) -> None:
+            nonlocal error_files, warn_files
+            if file_issues:
+                has_error = any(i.severity == Severity.ERROR for i in file_issues)
+                if has_error:
+                    error_files += 1
+                else:
+                    warn_files += 1
+            if not only_summary:
+                missing = ",".join(summary.missing_columns) if summary.missing_columns else "-"
+                logger.info(
+                    "[%d/%d] file=%s rows=%d range=%s..%s dup=%d missing=%s",
+                    progress.completed,
+                    progress.total,
+                    summary.path,
+                    summary.row_count,
+                    summary.min_dt,
+                    summary.max_dt,
+                    summary.duplicate_datetime_count,
+                    missing,
+                )
+
+        summaries, all_issues = validate_batch(
+            files, max_workers=workers, on_result=_on_result
+        )
+
+        logger.info(
+            "validated files=%d issue_files=%d (error=%d warn=%d) issues=%d",
+            len(files),
+            error_files + warn_files,
+            error_files,
+            warn_files,
+            len(all_issues),
+        )
+
+        if out_path:
+            if out_format == "csv":
+                write_issues_csv(out_path, all_issues)
+            else:
+                write_issues_jsonl(out_path, all_issues)
+            logger.info("issues written to %s", out_path)
+
+        if any(i.severity == Severity.ERROR for i in all_issues):
+            sys.exit(1)
+        return
+
     catalog_service = CatalogService(config.data_root_path, config.catalog, config.filters)
     rate_limiter = RateLimiter(config.rate_limit)
     yfinance_source = YFinanceDataSource(config, rate_limiter, catalog_service)
@@ -163,6 +266,33 @@ def main(argv: list[str] | None = None) -> None:
     writer = ParquetWriter(config.data_root_path)
 
     if args.command == "catalog":
+        data_root = config.data_root_path
+        cache_dir = data_root / "catalog"
+
+        if getattr(args, "refresh_all", False) and args.refresh:
+            # 依次联网更新所有支持远程拉取的资产类型，并写入本地
+            for asset_type in ("stock", "ashare"):
+                source.set_asset_type(asset_type)
+                filters_override = merge_filters(config.filters, _filters_from_args(args))
+                try:
+                    result = catalog_service.get_catalog(
+                        asset_type=asset_type,
+                        refresh=True,
+                        limit=args.limit or config.catalog.limit,
+                        filters_override=filters_override,
+                    )
+                    path = cache_dir / f"{asset_type}_symbols.csv"
+                    logger.info(
+                        "catalog %s: %s (%d) -> %s",
+                        asset_type,
+                        result.source,
+                        len(result.items),
+                        path,
+                    )
+                except Exception as e:
+                    logger.warning("catalog %s failed: %s", asset_type, e)
+            return
+
         source.set_asset_type(args.asset_type)
         filters_override = merge_filters(config.filters, _filters_from_args(args))
         result = catalog_service.get_catalog(
@@ -171,7 +301,13 @@ def main(argv: list[str] | None = None) -> None:
             limit=args.limit or config.catalog.limit,
             filters_override=filters_override,
         )
-        logger.info("catalog loaded: %s (%d)", result.source, len(result.items))
+        path = cache_dir / f"{args.asset_type}_symbols.csv"
+        logger.info(
+            "catalog loaded: %s (%d) -> %s",
+            result.source,
+            len(result.items),
+            path,
+        )
         return
 
     if args.command == "tui":
@@ -181,6 +317,7 @@ def main(argv: list[str] | None = None) -> None:
             config=config,
             source=source,
             writer=writer,
+            catalog_service=catalog_service,
         )
         app.run()
         return

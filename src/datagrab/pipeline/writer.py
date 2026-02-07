@@ -22,8 +22,11 @@ class ExistingRange:
 
 class ParquetWriter:
     def __init__(self, data_root: Path):
-        self.data_root = data_root
+        self.data_root = Path(data_root)
         self.logger = get_logger("datagrab.writer")
+
+    def set_data_root(self, data_root: Path) -> None:
+        self.data_root = Path(data_root)
 
     def symbol_dir(self, asset_type: str, symbol: str) -> Path:
         return self.data_root / asset_type / symbol
@@ -89,13 +92,43 @@ class ParquetWriter:
         adjustment: str | None,
     ) -> None:
         ensure_dir(output_path.parent)
+        df = new_df
         if existing_path and existing_path.exists():
             existing_df = pl.read_parquet(existing_path)
-            df = pl.concat([existing_df, new_df], how="diagonal_relaxed")
-        else:
-            df = new_df
+            # 历史版本/异常中断可能写出缺失 datetime 的坏文件；遇到则忽略旧文件，避免后续 unique/sort 报错
+            if "datetime" not in existing_df.columns:
+                self.logger.warning(
+                    "existing parquet missing datetime, ignoring: %s (cols=%s)",
+                    existing_path,
+                    list(existing_df.columns),
+                )
+                existing_df = pl.DataFrame()
+                existing_path = None
+            df = pl.concat([existing_df, new_df], how="diagonal_relaxed") if not existing_df.is_empty() else new_df
+        if "datetime" not in df.columns:
+            raise RuntimeError(f"datetime missing before write; cols={list(df.columns)}")
+        if "close" not in df.columns:
+            # close 缺失会导致后续回测/导出不可用，按“硬失败”处理
+            raise RuntimeError(f"close missing before write; cols={list(df.columns)}")
+
+        # 非关键列缺失：补齐为 null，保证 parquet schema 更稳定（并记录 warning）
+        optional_missing = [c for c in ("open", "high", "low", "volume") if c not in df.columns]
+        if optional_missing:
+            self.logger.warning(
+                "parquet missing optional columns, will fill nulls: %s (%s)",
+                ",".join(optional_missing),
+                output_path,
+            )
+            fill_exprs = []
+            for c in optional_missing:
+                dtype = pl.Float64
+                if c == "volume":
+                    dtype = pl.Float64
+                fill_exprs.append(pl.lit(None).cast(dtype).alias(c))
+            df = df.with_columns(fill_exprs)
+
         df = df.unique(subset=["datetime"], keep="last").sort("datetime")
-        columns = [c for c in BASE_COLUMNS if c in df.columns]
+        columns = list(BASE_COLUMNS)
         if ADJUSTED_COLUMN in df.columns:
             columns.append(ADJUSTED_COLUMN)
         df = df.select(columns)

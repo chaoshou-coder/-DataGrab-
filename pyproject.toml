@@ -19,10 +19,6 @@ classifiers = [
   "Topic :: Office/Business :: Financial :: Investment",
 ]
 
-[project.urls]
-Homepage = "https://github.com/chaoshou-coder/-DataGrab-"
-Repository = "https://github.com/chaoshou-coder/-DataGrab-"
-
 dependencies = [
   "textual>=0.55.0",
   "yfinance>=0.2.33",
@@ -34,8 +30,13 @@ dependencies = [
   "numpy>=1.26.0",
   "pandas>=2.0.0",
   "baostock",
+  "akshare>=1.14.0",
   "tzdata>=2024.1"
 ]
+
+[project.urls]
+Homepage = "https://github.com/chaoshou-coder/-DataGrab-"
+Repository = "https://github.com/chaoshou-coder/-DataGrab-"
 
 [project.scripts]
 datagrab = "datagrab.cli:main"

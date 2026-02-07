@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-from typing import Mapping
+from typing import TYPE_CHECKING, Mapping
 
 from .base import DataSource, OhlcvResult, SymbolInfo
+
+if TYPE_CHECKING:
+    from ..config import FilterConfig
 
 
 class SourceRouter(DataSource):
@@ -14,8 +17,16 @@ class SourceRouter(DataSource):
     def set_asset_type(self, asset_type: str) -> None:
         self.current_asset_type = asset_type
 
-    def list_symbols(self, asset_type: str, refresh: bool = False, limit: int | None = None) -> list[SymbolInfo]:
-        return self._select(asset_type).list_symbols(asset_type, refresh=refresh, limit=limit)
+    def list_symbols(
+        self,
+        asset_type: str,
+        refresh: bool = False,
+        limit: int | None = None,
+        filters_override: FilterConfig | None = None,
+    ) -> list[SymbolInfo]:
+        return self._select(asset_type).list_symbols(
+            asset_type, refresh=refresh, limit=limit, filters_override=filters_override
+        )
 
     def fetch_ohlcv(
         self,

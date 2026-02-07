@@ -3,8 +3,12 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 import polars as pl
+
+if TYPE_CHECKING:
+    from ..config import FilterConfig
 
 
 @dataclass(frozen=True)
@@ -32,6 +36,7 @@ class DataSource(ABC):
         asset_type: str,
         refresh: bool = False,
         limit: int | None = None,
+        filters_override: FilterConfig | None = None,
     ) -> list[SymbolInfo]:
         raise NotImplementedError
 

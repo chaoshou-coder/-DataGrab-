@@ -21,6 +21,8 @@ def normalize_ohlcv_columns(df: pl.DataFrame) -> pl.DataFrame:
         lowered = col.strip().lower().replace(" ", "_")
         rename_map[col] = lowered
     df = df.rename(rename_map)
+    if "index" in df.columns and "datetime" not in df.columns:
+        df = df.rename({"index": "datetime"})
     if "date" in df.columns and "datetime" not in df.columns:
         df = df.rename({"date": "datetime"})
     if "adj_close" in df.columns and ADJUSTED_COLUMN not in df.columns:

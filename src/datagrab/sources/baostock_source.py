@@ -9,7 +9,7 @@ from threading import Lock
 import pandas as pd
 import polars as pl
 
-from ..config import AppConfig
+from ..config import AppConfig, FilterConfig
 from ..logging import get_logger
 from ..pipeline.catalog import CatalogService
 from ..rate_limiter import RateLimiter
@@ -29,8 +29,19 @@ class BaostockDataSource(DataSource):
         self._logged_in = False
         self._bs = None
 
-    def list_symbols(self, asset_type: str, refresh: bool = False, limit: int | None = None) -> list[SymbolInfo]:
-        result = self.catalog.get_catalog(asset_type=asset_type, refresh=refresh, limit=limit)
+    def list_symbols(
+        self,
+        asset_type: str,
+        refresh: bool = False,
+        limit: int | None = None,
+        filters_override: FilterConfig | None = None,
+    ) -> list[SymbolInfo]:
+        result = self.catalog.get_catalog(
+            asset_type=asset_type,
+            refresh=refresh,
+            limit=limit,
+            filters_override=filters_override,
+        )
         self.logger.info("catalog source=%s size=%d", result.source, len(result.items))
         return result.items
 
