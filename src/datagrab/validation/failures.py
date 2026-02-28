@@ -7,7 +7,7 @@ from typing import Any, Iterable
 
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
-from ..timeutils import beijing_now
+from ..timeutils import beijing_now, parse_date
 
 
 class ValidationFailureRecordError(ValueError):
@@ -42,8 +42,7 @@ class FailureRecordModel(BaseModel):
     def _normalize_datetime(cls, value: str | None) -> str | None:
         if value is None or value == "":
             return None
-        dt = datetime.fromisoformat(value)
-        return dt.isoformat()
+        return value.strip()
 
     @field_validator("adjust")
     @classmethod
@@ -88,15 +87,31 @@ def validate_failure_rows(rows: Iterable[dict[str, str]], strict: bool) -> tuple
         task_start = default_start
         task_end = default_end
         if record.start:
-            try:
-                task_start = datetime.fromisoformat(record.start)
-            except ValueError:
-                task_start = default_start
+            task_start = _parse_failure_datetime(
+                record.start,
+                index,
+                "start",
+                default_start,
+                warnings,
+                strict,
+            )
         if record.end:
-            try:
-                task_end = datetime.fromisoformat(record.end)
-            except ValueError:
-                task_end = default_end
+            task_end = _parse_failure_datetime(
+                record.end,
+                index,
+                "end",
+                default_end,
+                warnings,
+                strict,
+            )
+
+        if task_start > task_end:
+            warning = f"failures row {index}: start > end, will normalize to default range"
+            if strict:
+                raise ValidationFailureRecordError(warning)
+            warnings.append(warning)
+            task_start = default_start
+            task_end = default_end
 
         failures.append(
             ValidatedFailureTask(
@@ -109,6 +124,24 @@ def validate_failure_rows(rows: Iterable[dict[str, str]], strict: bool) -> tuple
             )
         )
     return failures, warnings
+
+
+def _parse_failure_datetime(
+    raw: str,
+    row_no: int,
+    field: str,
+    fallback: datetime,
+    warnings: list[str],
+    strict: bool,
+) -> datetime:
+    try:
+        return parse_date(raw)
+    except ValueError as exc:
+        message = f"failures row {row_no}: invalid {field}={raw!r}, fallback={fallback.isoformat()}"
+        if strict:
+            raise ValidationFailureRecordError(message) from exc
+        warnings.append(message)
+        return fallback
 
 
 def write_failures_rows(path: Path, rows: list[dict[str, Any]]) -> None:

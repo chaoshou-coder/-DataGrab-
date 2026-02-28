@@ -45,19 +45,28 @@ def iter_parquet_files(
     symbol: str | None = None,
     interval: str | None = None,
 ) -> Iterable[Path]:
-    """遍历 data_root 下的 parquet 文件（默认 root/<asset_type>/<symbol>/*.parquet）。"""
+    """遍历指定目录下的 parquet 文件。
+
+    行为说明：
+    - 当只传 root：递归扫描 root 下所有 parquet。
+    - 当传 asset_type：仅保留目录层级为 root/<...>/<asset_type>/<symbol>/<interval>_*.parquet 的文件。
+    - 当传 symbol：仅保留目录层级为 root/<...>/<symbol>/<interval>_*.parquet 的文件。
+    - 若 root 本身已是 asset-type 或 symbol 路径，仍可正确匹配，不会再重复拼接路径。
+    """
     root = Path(root)
-    if asset_type and symbol:
-        base = root / asset_type / symbol
-        patterns = [f"{interval}_*.parquet" if interval else "*.parquet"]
-    elif asset_type:
-        base = root / asset_type
-        patterns = [f"**/{interval}_*.parquet" if interval else "**/*.parquet"]
-    else:
-        base = root
-        patterns = [f"**/{interval}_*.parquet" if interval else "**/*.parquet"]
-    for pat in patterns:
-        yield from base.glob(pat)
+    if not root.exists():
+        return
+    pattern = f"{interval}_*.parquet" if interval else "*.parquet"
+    for path in root.rglob(pattern):
+        try:
+            if symbol and path.parent.name != symbol:
+                continue
+            if asset_type:
+                if path.parent.parent.name != asset_type:
+                    continue
+        except Exception:
+            continue
+        yield path
 
 
 # ---------------------------------------------------------------------------

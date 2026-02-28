@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -12,6 +13,9 @@ from ..logging import get_logger
 from ..storage.schema import ADJUSTED_COLUMN, BASE_COLUMNS
 from ..timeutils import BEIJING_TZ, format_date_for_path, to_beijing
 
+_SYMBOL_SAFE_RE = re.compile(r"^[A-Za-z0-9._+=#@$%&^-]+$")
+_INVALID_SYMBOL_SUBSTRINGS = ("\\", "/", "..", ":", "|", "?", "*", '"', "<", ">", ";")
+
 
 @dataclass(frozen=True)
 class ExistingRange:
@@ -21,20 +25,46 @@ class ExistingRange:
 
 
 class ParquetWriter:
-    def __init__(self, data_root: Path):
+    def __init__(self, data_root: Path, *, merge_on_incremental: bool = True):
         self.data_root = Path(data_root)
         self.logger = get_logger("datagrab.writer")
+        self.merge_on_incremental = merge_on_incremental
 
     def set_data_root(self, data_root: Path) -> None:
         self.data_root = Path(data_root)
 
+    @staticmethod
+    def _validate_symbol(symbol: str) -> str:
+        token = (symbol or "").strip()
+        if not token:
+            raise ValueError("symbol is empty")
+        if len(token) > 128:
+            raise ValueError(f"invalid symbol length: {token}")
+        if any(item in token for item in _INVALID_SYMBOL_SUBSTRINGS):
+            raise ValueError(f"unsafe symbol: {token}")
+        if not _SYMBOL_SAFE_RE.fullmatch(token):
+            raise ValueError(f"unsafe symbol: {token}")
+        return token
+
+    def _ensure_within_data_root(self, path: Path) -> Path:
+        resolved_root = self.data_root.resolve()
+        resolved_path = path.resolve()
+        try:
+            resolved_path.relative_to(resolved_root)
+        except ValueError as exc:
+            raise ValueError(f"output path escapes data_root: {path}") from exc
+        return resolved_path
+
     def symbol_dir(self, asset_type: str, symbol: str) -> Path:
+        symbol = self._validate_symbol(symbol)
         return self.data_root / asset_type / symbol
 
     def build_path(self, asset_type: str, symbol: str, interval: str, start: datetime, end: datetime) -> Path:
+        self._validate_symbol(symbol)
         start_str = format_date_for_path(start)
         end_str = format_date_for_path(end)
-        return self.symbol_dir(asset_type, symbol) / f"{interval}_{start_str}_{end_str}.parquet"
+        output_path = self.symbol_dir(asset_type, symbol) / f"{interval}_{start_str}_{end_str}.parquet"
+        return self._ensure_within_data_root(output_path)
 
     def find_existing(self, asset_type: str, symbol: str, interval: str) -> ExistingRange | None:
         sym_dir = self.symbol_dir(asset_type, symbol)
@@ -91,20 +121,28 @@ class ParquetWriter:
         output_path: Path,
         adjustment: str | None,
     ) -> None:
+        output_path = self._ensure_within_data_root(output_path)
         ensure_dir(output_path.parent)
         df = new_df
-        if existing_path and existing_path.exists():
-            existing_df = pl.read_parquet(existing_path)
-            # 历史版本/异常中断可能写出缺失 datetime 的坏文件；遇到则忽略旧文件，避免后续 unique/sort 报错
-            if "datetime" not in existing_df.columns:
-                self.logger.warning(
-                    "existing parquet missing datetime, ignoring: %s (cols=%s)",
-                    existing_path,
-                    list(existing_df.columns),
-                )
-                existing_df = pl.DataFrame()
-                existing_path = None
-            df = pl.concat([existing_df, new_df], how="diagonal_relaxed") if not existing_df.is_empty() else new_df
+        if self.merge_on_incremental and existing_path:
+            existing_path = self._ensure_within_data_root(existing_path)
+            if existing_path.exists():
+                existing_df = pl.read_parquet(existing_path)
+                # 历史版本/异常中断可能写出缺失 datetime 的坏文件；遇到则忽略旧文件，避免后续 unique/sort 报错
+                if "datetime" not in existing_df.columns:
+                    self.logger.warning(
+                        "existing parquet missing datetime, ignoring: %s (cols=%s)",
+                        existing_path,
+                        list(existing_df.columns),
+                    )
+                    existing_df = pl.DataFrame()
+                    existing_path = None
+                else:
+                    df = pl.concat([existing_df, new_df], how="diagonal_relaxed")
+        elif existing_path:
+            existing_path = self._ensure_within_data_root(existing_path)
+            if existing_path.exists() and existing_path != output_path:
+                self.logger.info("merge_on_incremental disabled, existing file will be replaced: %s", existing_path)
         if "datetime" not in df.columns:
             raise RuntimeError(f"datetime missing before write; cols={list(df.columns)}")
         if "close" not in df.columns:
@@ -139,8 +177,6 @@ class ParquetWriter:
             table = table.replace_schema_metadata(metadata)
         tmp = output_path.with_suffix(output_path.suffix + ".tmp")
         pq.write_table(table, tmp)
-        if existing_path and existing_path.exists() and existing_path != output_path:
-            existing_path.unlink(missing_ok=True)
         tmp.replace(output_path)
 
     def _interval_delta(self, interval: str) -> timedelta:
@@ -148,6 +184,8 @@ class ParquetWriter:
         if interval.endswith("wk"):
             count = int(interval[:-2] or "1")
             return timedelta(days=7 * count)
+        if interval == "w":
+            return timedelta(days=7)
         if interval.endswith("mo"):
             count = int(interval[:-2] or "1")
             return timedelta(days=30 * count)
@@ -155,11 +193,18 @@ class ParquetWriter:
             count = int(interval[:-1] or "1")
             return timedelta(days=365 * count)
         unit = interval[-1]
-        count = int(interval[:-1] or "1")
+        if unit not in {"d", "h", "m", "s"}:
+            raise ValueError(f"unsupported interval for writer: {interval}")
+        try:
+            count = int(interval[:-1] or "1")
+        except ValueError as exc:
+            raise ValueError(f"unsupported interval for writer: {interval}") from exc
         if unit == "d":
             return timedelta(days=count)
         if unit == "h":
             return timedelta(hours=count)
         if unit == "m":
             return timedelta(minutes=count)
-        return timedelta(days=1)
+        if unit == "s":
+            return timedelta(seconds=count)
+        raise ValueError(f"unsupported interval for writer: {interval}")

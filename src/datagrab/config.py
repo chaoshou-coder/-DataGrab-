@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .rate_limiter import RateLimitConfig
+from .timeutils import set_timezone
 
 
 @dataclass
@@ -150,4 +151,5 @@ def load_config(path: str | None = None) -> AppConfig:
     data_root_override = os.getenv("DATAGRAB_DATA_ROOT")
     if data_root_override:
         config.storage.data_root = data_root_override
+    set_timezone(config.timezone)
     return config

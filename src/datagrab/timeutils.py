@@ -5,23 +5,33 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 BEIJING_TZ = ZoneInfo("Asia/Shanghai")
+_ACTIVE_TZ = BEIJING_TZ
 
 
 def beijing_now() -> datetime:
-    return datetime.now(tz=BEIJING_TZ)
+    return datetime.now(tz=_ACTIVE_TZ)
+
+
+def set_timezone(tz_name: str) -> ZoneInfo:
+    """更新项目运行时的标准时区（供配置注入）。"""
+    global _ACTIVE_TZ, BEIJING_TZ
+    zone = tz_name.strip() if tz_name else "Asia/Shanghai"
+    _ACTIVE_TZ = ZoneInfo(zone)
+    BEIJING_TZ = _ACTIVE_TZ
+    return _ACTIVE_TZ
 
 
 def parse_date(value: str) -> datetime:
     dt = datetime.fromisoformat(value)
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=BEIJING_TZ)
+        dt = dt.replace(tzinfo=_ACTIVE_TZ)
     return dt
 
 
 def to_beijing(dt: datetime) -> datetime:
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=ZoneInfo("UTC"))
-    return dt.astimezone(BEIJING_TZ)
+    return dt.astimezone(_ACTIVE_TZ)
 
 
 def format_date_for_path(dt: datetime) -> str:

@@ -243,9 +243,8 @@ class Downloader:
         return "ok"
 
     def _fetch_range(self, task: DownloadTask, start: datetime, end: datetime) -> pl.DataFrame:
-        chunks = list(self._split_range(start, end))
-        frames = []
-        for chunk_start, chunk_end in chunks:
+        df: pl.DataFrame | None = None
+        for chunk_start, chunk_end in self._split_range(start, end):
             if self._cancel.is_set():
                 break
             self._pause.wait()
@@ -255,10 +254,14 @@ class Downloader:
                 task.symbol, task.interval, chunk_start, chunk_end, task.adjust
             )
             if not result.data.is_empty():
-                frames.append(result.data)
-        if not frames:
+                if df is None:
+                    df = result.data
+                else:
+                    df = df.vstack(result.data)
+        if df is None:
             return pl.DataFrame()
-        df = pl.concat(frames, how="diagonal_relaxed")
+        if df.height == 0:
+            return pl.DataFrame()
         return df.unique(subset=["datetime"], keep="last").sort("datetime")
 
     def _split_range(self, start: datetime, end: datetime):

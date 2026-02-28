@@ -1,5 +1,22 @@
+storage:
+  # 数据根目录：CLI --data-root 会覆盖该值；如未覆盖且未设置 DATAGRAB_DATA_ROOT，会读取这里
+  data_root: "./data"
+  merge_on_incremental: true
+
+download:
+  # 并发下载数（按系统能力和源站限制调整）
+  concurrency: 4
+  # 按批次切割下载区间，避免单次请求窗口过长
+  batch_days: 60
+  # 重试次数（每个任务级别）
+  max_retries: 2
+  # 启动时的随机抖动（秒）
+  startup_jitter_max: 0.6
+
 rate_limit:
+  # 最大请求频率（建议 0.5~2.0）
   requests_per_second: 2.0
+  # 限速抖动区间（秒）
   jitter_min: 0.2
   jitter_max: 0.6
 
@@ -46,4 +63,28 @@ filters:
   include_fund_categories: []
   exclude_fund_categories: []
 
-# asset_types: ["stock", "ashare", "forex", "crypto", "commodity"]
+yfinance:
+  # yfinance 代理（如 "http://127.0.0.1:7890"）；不需要可不填
+  proxy: null
+  # yfinance 默认复权策略（auto/back/forward/none）
+  auto_adjust_default: "auto"
+
+catalog:
+  # symbol 拉取重试相关参数
+  retries: 3
+  sleep_sec: 0.6
+  retry_backoff: 1.5
+  limit: 500
+
+# 默认下载窗口（可按需覆盖）
+intervals_default:
+  - "1d"
+  # - "5m"
+  # - "1m"
+
+asset_types:
+  - stock
+  - ashare
+  # - forex
+  # - crypto
+  # - commodity

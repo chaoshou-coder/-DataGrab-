@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from zoneinfo import ZoneInfo
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from ..config import (
     AppConfig,
@@ -40,6 +42,12 @@ class RateLimitConfigModel(BaseModel):
         if value < 0:
             raise ValueError("must be >= 0")
         return float(value)
+
+    @model_validator(mode="after")
+    def _jitter_range(self) -> "RateLimitConfigModel":
+        if self.jitter_min > self.jitter_max:
+            raise ValueError("jitter_min cannot be greater than jitter_max")
+        return self
 
 
 class CatalogConfigModel(BaseModel):
@@ -131,10 +139,31 @@ class BaostockConfigModel(BaseModel):
         return normalized
 
 
+class FilterConfigModel(BaseModel):
+    include_regex: list[str] = Field(default_factory=list)
+    exclude_regex: list[str] = Field(default_factory=list)
+    include_prefixes: list[str] = Field(default_factory=list)
+    exclude_prefixes: list[str] = Field(default_factory=list)
+    include_symbols: list[str] = Field(default_factory=list)
+    exclude_symbols: list[str] = Field(default_factory=list)
+    include_name_regex: list[str] = Field(default_factory=list)
+    exclude_name_regex: list[str] = Field(default_factory=list)
+    include_exchanges: list[str] = Field(default_factory=list)
+    exclude_exchanges: list[str] = Field(default_factory=list)
+    include_market_categories: list[str] = Field(default_factory=list)
+    exclude_market_categories: list[str] = Field(default_factory=list)
+    only_etf: bool | None = None
+    only_fund: bool | None = None
+    include_fund_categories: list[str] = Field(default_factory=list)
+    exclude_fund_categories: list[str] = Field(default_factory=list)
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class AppConfigPayload(BaseModel):
     rate_limit: RateLimitConfigModel = RateLimitConfigModel()
     catalog: CatalogConfigModel = CatalogConfigModel()
-    filters: dict = Field(default_factory=dict)
+    filters: FilterConfigModel = Field(default_factory=FilterConfigModel)
     download: DownloadConfigModel = DownloadConfigModel()
     storage: StorageConfigModel = StorageConfigModel()
     yfinance: YFinanceConfigModel = YFinanceConfigModel()
@@ -175,6 +204,16 @@ class AppConfigPayload(BaseModel):
             return ["1d"]
         return [item.strip() for item in value if item and item.strip()]
 
+    @field_validator("timezone")
+    @classmethod
+    def _timezone(cls, value: str) -> str:
+        zone = (value or "").strip() or "Asia/Shanghai"
+        try:
+            ZoneInfo(zone)
+        except Exception as exc:
+            raise ValueError(f"invalid timezone: {value}") from exc
+        return zone
+
 
 def validate_config_payload(data: dict) -> AppConfigPayload:
     try:
@@ -193,7 +232,7 @@ def build_config_model(validated: AppConfigPayload) -> AppConfig:
         catalog=CatalogConfig(
             **validated.catalog.model_dump(),
         ),
-        filters=FilterConfig(**validated.filters),
+        filters=FilterConfig(**validated.filters.model_dump()),
         download=DownloadConfig(
             **validated.download.model_dump(),
         ),

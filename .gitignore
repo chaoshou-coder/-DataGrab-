@@ -19,7 +19,7 @@ build/
 sample/
 .pytest_cache/
 .ruff_cache/
-# 测试目录不纳入版本
+# 测试目录不纳入版本（按现有要求忽略 tests/）
 tests/
 
 

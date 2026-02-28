@@ -407,13 +407,16 @@ class CatalogService:
         self.logger.info("catalog: 正在远程拉取 %s ...", asset_type)
         fetched, last_error = self._fetch_with_retry(asset_type, progress_callback=_progress)
         if fetched:
+            source = "remote"
+            if last_error:
+                source = "remote-fallback"
             _progress("write_cache", "start", str(len(fetched)))
             self.logger.info("catalog: 拉取成功，正在写入缓存 %s (%d 条) ...", asset_type, len(fetched))
             self._write_cache(cache_path, fetched)
             _progress("write_cache", "done", None)
             items_full = self._apply_filters(fetched, None, filters)
             total = len(items_full)
-            return self._result_with_options(items_full, total, "remote", limit)
+            return self._result_with_options(items_full, total, source, limit)
         cached = self._load_cache(cache_path)
         if cached:
             items_full = self._apply_filters(cached, None, filters)
@@ -464,11 +467,20 @@ class CatalogService:
                 # 加密/外汇/商品：先尝试从 Yahoo Finance screener 动态拉取
                 if asset_type in _YAHOO_SCREENER_IDS:
                     _progress("fetch", "start", None)
-                    items = self._fetch_yahoo_screener(asset_type)
+                    items, fetch_err = self._fetch_yahoo_screener(asset_type)
+                    if fetch_err:
+                        self.logger.warning(
+                            "yahoo screener request failed, fallback to static catalog for %s: %s",
+                            asset_type,
+                            fetch_err,
+                        )
                     if items:
                         _progress("fetch", "done", str(len(items)))
                         return (items, None)
                     out = self._static_catalog(asset_type)
+                    if fetch_err:
+                        _progress("fetch", "fallback", "static_catalog")
+                        return (out, fetch_err)
                     _progress("fetch", "done", str(len(out)))
                     return (out, None)
                 # 动态拉取失败则使用内置最小列表
@@ -478,18 +490,18 @@ class CatalogService:
                 return (out, None)
             except Exception as exc:
                 last_error = str(exc)
-                self.logger.warning("catalog fetch failed: %s", exc)
+                self.logger.warning("catalog fetch failed (attempt %s): %s", attempt + 1, exc)
                 time.sleep(delay)
                 delay *= self.config.retry_backoff
         return (None, last_error)
 
-    def _fetch_yahoo_screener(self, asset_type: str) -> list[SymbolInfo]:
+    def _fetch_yahoo_screener(self, asset_type: str) -> tuple[list[SymbolInfo], str | None]:
         """从 Yahoo Finance screener API 动态获取加密货币/外汇/商品期货目录。"""
         import httpx
 
         scr_id = _YAHOO_SCREENER_IDS.get(asset_type)
         if not scr_id:
-            return []
+            return [], "scraper id missing"
         headers = {
             "User-Agent": "Mozilla/5.0",
         }
@@ -515,12 +527,13 @@ class CatalogService:
                 scr_id,
                 exc,
             )
-            return []
+            return [], str(exc)
 
         results = (data.get("finance") or {}).get("result") or []
         if not results:
-            self.logger.warning("yahoo screener returned empty for %s", asset_type)
-            return []
+            msg = "yahoo screener returned empty result"
+            self.logger.warning("%s for %s", msg, asset_type)
+            return [], msg
         quotes = results[0].get("quotes") or []
         for q in quotes:
             symbol = (q.get("symbol") or "").strip()
@@ -545,7 +558,10 @@ class CatalogService:
             self.logger.info(
                 "yahoo screener fetched %d symbols for %s", len(items), asset_type
             )
-        return items
+            return items, None
+        msg = f"yahoo screener returned no valid symbols for {asset_type}"
+        self.logger.warning(msg)
+        return [], msg
 
     def _check_stock_catalog_reachable(self) -> None:
         """拉取前先检测能否访问 NASDAQ 列表地址，便于用户排查网络/代理。"""
@@ -1044,39 +1060,50 @@ class CatalogService:
         if not path.exists():
             return None
         items: list[SymbolInfo] = []
-        with path.open("r", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                symbol = (row.get("symbol") or "").strip()
-                if not symbol:
-                    continue
-                etf_value = (row.get("is_etf") or "").strip().upper()
-                if etf_value == "Y":
-                    is_etf = True
-                elif etf_value == "N":
-                    is_etf = False
-                else:
-                    is_etf = None
-                fund_value = (row.get("is_fund") or "").strip().upper()
-                if fund_value == "Y":
-                    is_fund = True
-                elif fund_value == "N":
-                    is_fund = False
-                else:
-                    is_fund = None
-                items.append(
-                    SymbolInfo(
-                        symbol=symbol,
-                        name=row.get("name") or None,
-                        exchange=row.get("exchange") or None,
-                        asset_type=row.get("asset_type") or "stock",
-                        market_category=row.get("market_category") or None,
-                        is_etf=is_etf,
-                        is_fund=is_fund,
-                        fund_category=row.get("fund_category") or None,
-                    )
-                )
-        return items
+        try:
+            with path.open("r", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    try:
+                        symbol = (row.get("symbol") or "").strip()
+                        if not symbol:
+                            continue
+                        etf_value = (row.get("is_etf") or "").strip().upper()
+                        if etf_value == "Y":
+                            is_etf = True
+                        elif etf_value == "N":
+                            is_etf = False
+                        else:
+                            is_etf = None
+                        fund_value = (row.get("is_fund") or "").strip().upper()
+                        if fund_value == "Y":
+                            is_fund = True
+                        elif fund_value == "N":
+                            is_fund = False
+                        else:
+                            is_fund = None
+                        items.append(
+                            SymbolInfo(
+                                symbol=symbol,
+                                name=row.get("name") or None,
+                                exchange=row.get("exchange") or None,
+                                asset_type=row.get("asset_type") or "stock",
+                                market_category=row.get("market_category") or None,
+                                is_etf=is_etf,
+                                is_fund=is_fund,
+                                fund_category=row.get("fund_category") or None,
+                            )
+                        )
+                    except Exception as exc:
+                        self.logger.warning("invalid cache row in %s: %s", path, exc)
+                        continue
+            return items
+        except UnicodeDecodeError as exc:
+            self.logger.warning("cache decode failed for %s: %s", path, exc)
+            return None
+        except Exception as exc:
+            self.logger.warning("cache read failed for %s: %s", path, exc)
+            return None
 
     def _write_cache(self, path: Path, items: list[SymbolInfo]) -> None:
         ensure_dir(path.parent)
