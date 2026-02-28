@@ -22,9 +22,10 @@ class RateLimiter:
         self._last_ts = 0.0
 
     def wait(self) -> None:
+        if self.config.requests_per_second <= 0:
+            return
         min_interval = 0.0
-        if self.config.requests_per_second > 0:
-            min_interval = 1.0 / self.config.requests_per_second
+        min_interval = 1.0 / self.config.requests_per_second
         with self._lock:
             now = time.monotonic()
             next_allowed = self._last_ts + min_interval

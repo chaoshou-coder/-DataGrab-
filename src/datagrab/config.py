@@ -104,31 +104,6 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
     return result
 
 
-def _dict_to_config(data: dict[str, Any]) -> AppConfig:
-    rate = RateLimitConfig(**data.get("rate_limit", {}))
-    catalog = CatalogConfig(**data.get("catalog", {}))
-    filters = FilterConfig(**data.get("filters", {}))
-    download = DownloadConfig(**data.get("download", {}))
-    storage = StorageConfig(**data.get("storage", {}))
-    yfinance = YFinanceConfig(**data.get("yfinance", {}))
-    baostock = BaostockConfig(**data.get("baostock", {}))
-    intervals = data.get("intervals_default", ["1d"])
-    asset_types = data.get("asset_types", ["stock", "ashare", "forex", "crypto", "commodity"])
-    timezone = data.get("timezone", "Asia/Shanghai")
-    return AppConfig(
-        rate_limit=rate,
-        catalog=catalog,
-        filters=filters,
-        download=download,
-        storage=storage,
-        yfinance=yfinance,
-        baostock=baostock,
-        timezone=timezone,
-        intervals_default=intervals,
-        asset_types=asset_types,
-    )
-
-
 def merge_filters(base: FilterConfig, extra: FilterConfig | None) -> FilterConfig:
     if extra is None:
         return base
@@ -165,7 +140,13 @@ def load_config(path: str | None = None) -> AppConfig:
             data = _load_toml(p)
         else:
             raise ValueError("config must be YAML or TOML")
-    config = _dict_to_config(data)
+    from .validation.config import ValidationConfigError, build_config_model, validate_config_payload
+
+    try:
+        validated = validate_config_payload(data)
+    except ValidationConfigError as exc:
+        raise RuntimeError(f"invalid config: {exc}") from exc
+    config = build_config_model(validated)
     data_root_override = os.getenv("DATAGRAB_DATA_ROOT")
     if data_root_override:
         config.storage.data_root = data_root_override

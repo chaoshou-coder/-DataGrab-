@@ -50,7 +50,7 @@ class YFinanceDataSource(DataSource):
         end: datetime,
         adjust: str,
     ) -> OhlcvResult:
-        auto_adjust = adjust.lower() in {"auto", "back", "forward"}
+        auto_adjust = adjust.lower() in {"auto", "back", "forward", "front", "backward"}
         start_str = to_beijing(start).strftime("%Y-%m-%d")
         end_str = to_beijing(end).strftime("%Y-%m-%d")
         for attempt in range(self.config.download.max_retries + 1):

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import csv
+import json
 import sys
 from pathlib import Path
 
@@ -15,9 +17,15 @@ from .sources.baostock_source import BaostockDataSource
 from .sources.router import SourceRouter
 from .sources.yfinance_source import YFinanceDataSource
 from .storage.export import export_backtrader_csv, export_vectorbt_npz
-from .storage.quality import Severity, write_issues_csv, write_issues_jsonl
+from .storage.quality import Severity
 from .storage.validate import BatchProgress, iter_parquet_files, validate_batch
-from .timeutils import DateRange, default_date_range, parse_date
+from .timeutils import DateRange, default_date_range
+from .validation import (
+    CliValidationError,
+    ValidationFailureRecordError,
+    validate_cli_args,
+    render_cli_error,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -25,9 +33,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--config", "-c", type=str, help="config path (YAML/TOML)")
     parser.add_argument("--log-level", type=str, default="INFO")
     subparsers = parser.add_subparsers(dest="command")
-
-    tui_parser = subparsers.add_parser("tui", help="launch Textual TUI")
-    tui_parser.add_argument("--asset-type", type=str, default="stock")
 
     catalog_parser = subparsers.add_parser(
         "catalog",
@@ -59,10 +64,15 @@ def build_parser() -> argparse.ArgumentParser:
     dl_parser.add_argument("--intervals", type=str, help="comma separated intervals")
     dl_parser.add_argument("--start", type=str)
     dl_parser.add_argument("--end", type=str)
-    dl_parser.add_argument("--adjust", type=str, help="none/auto/back/forward")
+    dl_parser.add_argument("--adjust", type=str, help="none/auto/back/forward（front/backward 兼容）")
     dl_parser.add_argument("--limit", type=int)
     dl_parser.add_argument("--only-failures", action="store_true")
     dl_parser.add_argument("--failures-file", type=str)
+    dl_parser.add_argument(
+        "--strict-failures-csv",
+        action="store_true",
+        help="failures 文件中存在任何错误行时立即中断",
+    )
     _add_filter_args(dl_parser)
 
     deps_parser = subparsers.add_parser("check-deps", help="check dependencies")
@@ -165,11 +175,27 @@ def main(argv: list[str] | None = None) -> None:
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.command is None:
-        args.command = "tui"
+        parser.print_help()
+        return
 
-    configure_logging(args.log_level)
+    try:
+        config = load_config(args.config)
+    except Exception as exc:
+        print(f"配置加载失败: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        cli_args = validate_cli_args(args, asset_types=config.asset_types)
+    except CliValidationError as exc:
+        print(f"参数校验失败: {render_cli_error(exc)}", file=sys.stderr)
+        sys.exit(2)
+
+    try:
+        configure_logging(cli_args.log_level)
+    except Exception as exc:
+        print(f"日志级别配置失败: {exc}", file=sys.stderr)
+        configure_logging("INFO")
     logger = get_logger("datagrab.cli")
-    config = load_config(args.config)
 
     if args.command == "check-deps":
         missing = check_deps(auto_install=args.auto_install)
@@ -191,13 +217,13 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.command == "validate":
         root = Path(args.root).resolve() if getattr(args, "root", None) else config.data_root_path
-        asset_type = getattr(args, "asset_type", None)
-        symbol = getattr(args, "symbol", None)
-        interval = getattr(args, "interval", None)
+        asset_type = cli_args.asset_type
+        symbol = args.symbol
+        interval = args.interval
         out_path = Path(args.out).resolve() if getattr(args, "out", None) else None
-        out_format = getattr(args, "format", "jsonl")
-        only_summary = bool(getattr(args, "summary", False))
-        workers = getattr(args, "workers", None)
+        out_format = args.format
+        only_summary = bool(args.summary)
+        workers = cli_args.workers
 
         files = list(iter_parquet_files(root, asset_type=asset_type, symbol=symbol, interval=interval))
         if not files:
@@ -211,6 +237,14 @@ def main(argv: list[str] | None = None) -> None:
 
         error_files = 0
         warn_files = 0
+        issue_count = 0
+        error_count = 0
+
+        def _on_issue(issue) -> None:
+            nonlocal issue_count, error_count
+            issue_count += 1
+            if issue.severity == Severity.ERROR:
+                error_count += 1
 
         def _on_result(summary, file_issues, progress: BatchProgress) -> None:
             nonlocal error_files, warn_files
@@ -234,35 +268,77 @@ def main(argv: list[str] | None = None) -> None:
                     missing,
                 )
 
-        summaries, all_issues = validate_batch(
-            files, max_workers=workers, on_result=_on_result
-        )
-
-        logger.info(
-            "validated files=%d issue_files=%d (error=%d warn=%d) issues=%d",
-            len(files),
-            error_files + warn_files,
-            error_files,
-            warn_files,
-            len(all_issues),
-        )
-
+        all_issues: list = []
         if out_path:
+            out_path.parent.mkdir(parents=True, exist_ok=True)
             if out_format == "csv":
-                write_issues_csv(out_path, all_issues)
-            else:
-                write_issues_jsonl(out_path, all_issues)
-            logger.info("issues written to %s", out_path)
+                with out_path.open("w", encoding="utf-8", newline="") as f:
+                    fieldnames = [
+                        "created_at",
+                        "severity",
+                        "rule_id",
+                        "asset_type",
+                        "symbol",
+                        "interval",
+                        "path",
+                        "message",
+                        "details",
+                    ]
+                    writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
+                    writer.writeheader()
 
-        if any(i.severity == Severity.ERROR for i in all_issues):
+                    def _on_issue_csv(issue) -> None:
+                        _on_issue(issue)
+                        writer.writerow(issue.to_dict())
+
+                    _, all_issues = validate_batch(
+                        files, max_workers=effective_workers, on_result=_on_result, issue_writer=_on_issue_csv
+                    )
+            else:
+                with out_path.open("w", encoding="utf-8") as f:
+                    def _on_issue_jsonl(issue) -> None:
+                        _on_issue(issue)
+                        f.write(json.dumps(issue.to_dict(), ensure_ascii=False))
+                        f.write("\n")
+
+                    _, all_issues = validate_batch(
+                        files, max_workers=effective_workers, on_result=_on_result, issue_writer=_on_issue_jsonl
+                    )
+            logger.info("issues written to %s", out_path)
+            issue_files = error_files + warn_files
+            logger.info(
+                "validated files=%d issue_files=%d (error=%d warn=%d) issues=%d",
+                len(files),
+                issue_files,
+                error_count,
+                issue_files - error_count,
+                issue_count,
+            )
+        else:
+            summaries, all_issues = validate_batch(
+                files, max_workers=effective_workers, on_result=_on_result, issue_writer=None
+            )
+            issue_count = len(all_issues)
+            error_count = sum(1 for issue in all_issues if issue.severity == Severity.ERROR)
+            issue_files = error_files + warn_files
+            logger.info(
+                "validated files=%d issue_files=%d (error=%d warn=%d) issues=%d",
+                len(files),
+                issue_files,
+                error_count,
+                issue_files - error_count,
+                issue_count,
+            )
+
+        if error_count > 0:
             sys.exit(1)
         return
 
-    catalog_service = CatalogService(config.data_root_path, config.catalog, config.filters)
+    catalog_service = CatalogService(config.data_root_path, config.catalog, config.filters, yfinance_config=config.yfinance)
     rate_limiter = RateLimiter(config.rate_limit)
     yfinance_source = YFinanceDataSource(config, rate_limiter, catalog_service)
     baostock_source = BaostockDataSource(config, rate_limiter, catalog_service)
-    source = SourceRouter(yfinance_source, {"ashare": baostock_source})
+    source = SourceRouter(yfinance_source, {"ashare": baostock_source}, allowed_asset_types=config.asset_types)
     writer = ParquetWriter(config.data_root_path)
 
     if args.command == "catalog":
@@ -293,15 +369,15 @@ def main(argv: list[str] | None = None) -> None:
                     logger.warning("catalog %s failed: %s", asset_type, e)
             return
 
-        source.set_asset_type(args.asset_type)
+        source.set_asset_type(cli_args.asset_type or "stock")
         filters_override = merge_filters(config.filters, _filters_from_args(args))
         result = catalog_service.get_catalog(
-            asset_type=args.asset_type,
+            asset_type=cli_args.asset_type or "stock",
             refresh=args.refresh,
             limit=args.limit or config.catalog.limit,
             filters_override=filters_override,
         )
-        path = cache_dir / f"{args.asset_type}_symbols.csv"
+        path = cache_dir / f"{cli_args.asset_type or 'stock'}_symbols.csv"
         logger.info(
             "catalog loaded: %s (%d) -> %s",
             result.source,
@@ -310,45 +386,29 @@ def main(argv: list[str] | None = None) -> None:
         )
         return
 
-    if args.command == "tui":
-        from .tui.app import DatagrabApp
-
-        app = DatagrabApp(
-            config=config,
-            source=source,
-            writer=writer,
-            catalog_service=catalog_service,
-        )
-        app.run()
-        return
-
     if args.command == "download":
-        source.set_asset_type(args.asset_type)
+        source.set_asset_type(cli_args.asset_type or "stock")
         symbols = _parse_symbols(args)
         if not symbols:
             filters_override = merge_filters(config.filters, _filters_from_args(args))
             result = catalog_service.get_catalog(
-                asset_type=args.asset_type,
+                asset_type=cli_args.asset_type or "stock",
                 refresh=False,
                 limit=args.limit or config.catalog.limit,
                 filters_override=filters_override,
             )
             symbols = [item.symbol for item in result.items]
-        intervals = (
-            [s.strip() for s in args.intervals.split(",") if s.strip()]
-            if args.intervals
-            else config.intervals_default
-        )
+        intervals = cli_args.intervals if cli_args.intervals else config.intervals_default
         date_range = default_date_range()
-        if args.start:
-            date_range = DateRange(parse_date(args.start), date_range.end)
-        if args.end:
-            date_range = DateRange(date_range.start, parse_date(args.end))
-        if args.asset_type == "ashare":
+        if cli_args.start:
+            date_range = DateRange(cli_args.start, date_range.end)
+        if cli_args.end:
+            date_range = DateRange(date_range.start, cli_args.end)
+        if (cli_args.asset_type or "stock") == "ashare":
             adjust_default = config.baostock.adjust_default
         else:
             adjust_default = config.yfinance.auto_adjust_default
-        adjust = args.adjust or adjust_default
+        adjust = cli_args.adjust or adjust_default
         downloader = Downloader(
             source=source,
             writer=writer,
@@ -361,7 +421,7 @@ def main(argv: list[str] | None = None) -> None:
             intervals=intervals,
             start=date_range.start,
             end=date_range.end,
-            asset_type=args.asset_type,
+            asset_type=cli_args.asset_type or "stock",
             adjust=adjust,
         )
         failures_path = (
@@ -380,12 +440,17 @@ def main(argv: list[str] | None = None) -> None:
                 stats.skipped,
             )
 
-        failures = downloader.run(
-            tasks,
-            failures_path=failures_path,
-            only_failures=args.only_failures,
-            progress_cb=on_progress,
-        )
+        try:
+            failures = downloader.run(
+                tasks,
+                failures_path=failures_path,
+                only_failures=args.only_failures,
+                strict_failures_csv=cli_args.strict_failures_csv,
+                progress_cb=on_progress,
+            )
+        except ValidationFailureRecordError as exc:
+            print(f"failures 文件解析失败: {exc}", file=sys.stderr)
+            sys.exit(2)
         if failures:
             logger.warning("failures recorded at %s", failures_path)
             sys.exit(1)

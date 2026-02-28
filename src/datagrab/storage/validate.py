@@ -161,7 +161,7 @@ def validate_parquet_file(path: Path) -> tuple[FileSummary, list[QualityIssue]]:
     # ---------- 单次 collect ----------
     try:
         result = lf.select(exprs).collect()
-    except Exception as exc:
+    except Exception:
         # 融合 collect 失败 → 降级为逐项检查
         return _validate_fallback(lf, cols, path, asset_type, symbol, interval, missing, issues)
 
@@ -282,6 +282,7 @@ def validate_batch(
     files: list[Path],
     max_workers: int | None = None,
     on_result: Callable[[FileSummary, list[QualityIssue], BatchProgress], None] | None = None,
+    issue_writer: Callable[[QualityIssue], None] | None = None,
 ) -> tuple[list[FileSummary], list[QualityIssue]]:
     """并行批量验证 parquet 文件，充分利用多核 CPU。
 
@@ -297,6 +298,8 @@ def validate_batch(
         线程数。``None`` 时自动取 ``min(cpu_count, len(files), 32)``。
     on_result : callback(summary, issues, progress)
         每完成一个文件后调用（从工作线程回调，调用方自行处理线程安全）。
+    issue_writer : callback(issue) 或 None
+        逐条 issue 写出回调。若提供该参数，不再返回完整 issue 列表。
     """
     if max_workers is None:
         cpu = os.cpu_count() or 4
@@ -315,7 +318,11 @@ def validate_batch(
         for idx, p in enumerate(files):
             summary, issues = validate_parquet_file(p)
             summaries.append(summary)
-            all_issues.extend(issues)
+            if issue_writer is None:
+                all_issues.extend(issues)
+            else:
+                for issue in issues:
+                    issue_writer(issue)
             if on_result:
                 prog = BatchProgress(total=total, completed=idx + 1, current_file=p.name)
                 on_result(summary, issues, prog)
@@ -344,11 +351,14 @@ def validate_batch(
                 ]
                 summary = _empty_summary(p, at, sym, itv)
             summaries.append(summary)
-            all_issues.extend(issues)
+            if issue_writer is None:
+                all_issues.extend(issues)
+            else:
+                for issue in issues:
+                    issue_writer(issue)
             if on_result:
                 prog = BatchProgress(total=total, completed=completed, current_file=p.name)
                 on_result(summary, issues, prog)
-
     return summaries, all_issues
 
 

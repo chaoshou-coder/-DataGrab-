@@ -13,7 +13,6 @@ class Dependency:
 
 
 REQUIRED = [
-    Dependency("textual", "textual"),
     Dependency("yfinance", "yfinance"),
     Dependency("baostock", "baostock"),
     Dependency("akshare", "akshare"),
@@ -24,6 +23,7 @@ REQUIRED = [
     Dependency("rich", "rich"),
     Dependency("numpy", "numpy"),
     Dependency("pandas", "pandas"),
+    Dependency("pydantic", "pydantic"),
 ]
 
 

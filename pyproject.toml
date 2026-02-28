@@ -5,12 +5,12 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "datagrab"
 version = "0.1.0"
-description = "财采 (DataGrab): 多市场财经数据采集，支持美股/A股、TUI与CLI、断点续传与增量更新"
+description = "财采 (DataGrab): 多市场财经数据采集，支持美股/A股、CLI、断点续传与增量更新"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "DataGrab Contributors" }]
-keywords = ["finance", "yahoo", "baostock", "ashare", "ohlcv", "parquet", "tui", "datagrab"]
+keywords = ["finance", "yahoo", "baostock", "ashare", "ohlcv", "parquet", "datagrab"]
 classifiers = [
   "License :: OSI Approved :: MIT License",
   "Programming Language :: Python :: 3",
@@ -20,7 +20,6 @@ classifiers = [
 ]
 
 dependencies = [
-  "textual>=0.55.0",
   "yfinance>=0.2.33",
   "polars>=0.20.0",
   "pyarrow>=14.0.0",
@@ -31,7 +30,8 @@ dependencies = [
   "pandas>=2.0.0",
   "baostock",
   "akshare>=1.14.0",
-  "tzdata>=2024.1"
+  "tzdata>=2024.1",
+  "pydantic>=2.7.0",
 ]
 
 [project.urls]

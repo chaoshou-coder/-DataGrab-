@@ -14,7 +14,8 @@ import polars as pl
 
 from ..fsutils import atomic_write_text
 from ..logging import get_logger
-from ..timeutils import beijing_now, parse_date, to_beijing
+from ..validation.failures import validate_failure_rows
+from ..timeutils import beijing_now, to_beijing
 from .writer import ParquetWriter
 from ..sources.base import DataSource
 
@@ -130,10 +131,11 @@ class Downloader:
         tasks: list[DownloadTask],
         failures_path: Path,
         only_failures: bool = False,
+        strict_failures_csv: bool = False,
         progress_cb: ProgressCallback | None = None,
     ) -> list[FailureRecord]:
         if only_failures:
-            tasks = self._load_failures(failures_path)
+            tasks = self._load_failures(failures_path, strict=strict_failures_csv)
         random.shuffle(tasks)
         stats = DownloadStats(total=len(tasks))
         failures: list[FailureRecord] = []
@@ -165,7 +167,7 @@ class Downloader:
             except Exception as exc:
                 if self._cancel.is_set():
                     return
-                # 记录详细异常（含堆栈），避免 TUI/CLI 只能看到“失败=N”
+                # 记录详细异常（含堆栈），避免仅看统计数难以定位问题
                 self.logger.error(
                     "download failed: asset_type=%s symbol=%s interval=%s start=%s end=%s adjust=%s err=%s",
                     task.asset_type,
@@ -182,7 +184,7 @@ class Downloader:
                     record = FailureRecord(task=task, reason=_format_failure_reason(exc))
                     failures.append(record)
                     stats.recent_failures.append(record)
-                    # 保留最近 N 条，供 TUI 直观查看
+                    # 保留最近 N 条用于日志与告警上下文
                     if len(stats.recent_failures) > 20:
                         stats.recent_failures = stats.recent_failures[-20:]
                     # 失败发生时也立即推送一次（不必等到 finally）
@@ -272,14 +274,26 @@ class Downloader:
         buf = io.StringIO()
         writer = csv.DictWriter(
             buf,
-            fieldnames=["symbol", "interval", "start", "end", "asset_type", "adjust", "reason"],
+            fieldnames=[
+                "version",
+                "symbol",
+                "interval",
+                "start",
+                "end",
+                "asset_type",
+                "adjust",
+                "reason",
+                "created_at",
+            ],
             lineterminator="\n",
         )
         writer.writeheader()
+        created_at = beijing_now().isoformat(timespec="seconds")
         for failure in failures:
             t = failure.task
             writer.writerow(
                 {
+                    "version": "1",
                     "symbol": t.symbol,
                     "interval": t.interval,
                     "start": str(t.start.date()),
@@ -287,29 +301,22 @@ class Downloader:
                     "asset_type": t.asset_type,
                     "adjust": t.adjust,
                     "reason": failure.reason,
+                    "created_at": created_at,
                 }
             )
         atomic_write_text(path, buf.getvalue())
 
-    def _load_failures(self, path: Path) -> list[DownloadTask]:
+    def _load_failures(self, path: Path, strict: bool = False) -> list[DownloadTask]:
         if not path.exists():
             return []
         tasks: list[DownloadTask] = []
+        rows: list[dict[str, str]] = []
         with path.open("r", encoding="utf-8") as f:
             reader = csv.DictReader(f)
             for row in reader:
-                start_str = row.get("start", "").strip()
-                end_str = row.get("end", "").strip()
-                start = parse_date(start_str) if start_str else (beijing_now() - timedelta(days=365))
-                end = parse_date(end_str) if end_str else beijing_now()
-                tasks.append(
-                    DownloadTask(
-                        symbol=row["symbol"],
-                        interval=row["interval"],
-                        start=start,
-                        end=end,
-                        asset_type=row.get("asset_type", "stock"),
-                        adjust=row.get("adjust", "auto"),
-                    )
-                )
+                rows.append(row)
+        parsed, warnings = validate_failure_rows(rows, strict=strict)
+        tasks.extend(parsed)
+        for message in warnings:
+            self.logger.warning(message)
         return tasks

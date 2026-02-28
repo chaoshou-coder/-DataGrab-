@@ -11,7 +11,7 @@
 ```
 数据源层 (yfinance / baostock / 预留扩展)
         ↓
-目录服务 (拉取/缓存/过滤) → TUI 或 CLI 选择标的
+目录服务 (拉取/缓存/过滤) → CLI 指定下载任务
         ↓
 下载调度 (任务队列、断点判断、增量区间、并发+限速)
         ↓
@@ -21,7 +21,8 @@
 ```
 
 - **数据源层**：`DataSource` 抽象（列出标的、拉取 OHLCV），首实现 `YFinanceDataSource`、`BaostockDataSource`；限速与随机休眠在数据源侧统一实现。
-- **目录服务**：按资产类型拉取或读缓存，支持多日重试与回退到上次缓存；过滤（交易所、板块、基金子类、名称包含·排除）在 TUI 以多选预设呈现。
+- **统一校验层**：命令行参数、配置与 `failures.csv` 都在入口/服务边界通过 `pydantic` 校验，非法输入在执行前失败返回。
+- **目录服务**：按资产类型拉取或读缓存，支持多日重试与回退到上次缓存；过滤（交易所、板块、基金子类、名称包含·排除）通过 `datagrab catalog` 命令行参数完成。
 - **下载调度**：按「标的 + 粒度 + 日期范围」组任务，判断已有 Parquet 是否覆盖区间，未覆盖则仅拉增量；合并后写单文件，减少小文件。
 - **存储**：`{data_root}/{asset_type}/{symbol}/{interval}_{start}_{end}.parquet`；可选按回测引擎导出。
 
@@ -31,7 +32,8 @@
 
 | 模块/包 | 职责 |
 |--------|------|
-| `datagrab.cli` | 命令行入口，解析 tui / catalog / download / check-deps / export，加载配置并注入依赖 |
+| `datagrab.cli` | 命令行入口，解析 catalog / download / check-deps / export / validate，加载配置并注入依赖 |
+| `datagrab.validation` | Pydantic 验证模型（CLI 参数、配置、failures）及错误映射 |
 | `datagrab.config` | 配置加载（YAML/TOML）、默认值、环境变量覆盖、FilterConfig 等 |
 | `datagrab.sources.base` | `DataSource` 抽象、`SymbolInfo` / `OhlcvResult` |
 | `datagrab.sources.yfinance_source` | 美股等 yfinance 实现，限速、429 退避、复权参数 |
@@ -46,7 +48,6 @@
 | `datagrab.storage.export` | 导出 VectorBT（NumPy）、Backtrader（CSV）等 |
 | `datagrab.rate_limiter` | 请求/秒 + 随机抖动、429 指数退避 |
 | `datagrab.timeutils` | 北京时区、日期解析与路径格式化 |
-| `datagrab.tui` | Textual 应用：资产类型 → 目录（多选过滤）→ 勾选/手工 symbol → 下载配置 → 执行；首屏与任务屏提供「数据检查」入口，长时间操作均有进度指示 |
 
 ---
 
@@ -63,9 +64,10 @@
   ashare/
     sh.600000/
       1d_20200101_20241231.parquet
-  failures_<asset_type>.csv   # 本次运行失败任务（按资产类型）
+  failures.csv               # 本次运行失败任务列表
   quality_issues_<时间戳>.jsonl  # 数据检查导出的质量问题（可选）
   quality_issues_<时间戳>.csv
+failures.csv（v1，包含 version / created_at）
 ```
 
 文件名格式：`{interval}_{start_yyyymmdd}_{end_yyyymmdd}.parquet`。增量后同标的同粒度会合并为单文件。
@@ -80,4 +82,3 @@
 | ashare | baostock | A 股，目录与复权由 baostock 提供 |
 | forex / crypto / commodity | yfinance + 预设列表 | 目录为内置预设，下载走 yfinance |
 
-TUI 中资产类型以「股票 · 美股」「股票 · A股」等展示，A 股作为股票子集呈现。

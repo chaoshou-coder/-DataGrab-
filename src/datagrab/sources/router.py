@@ -9,12 +9,21 @@ if TYPE_CHECKING:
 
 
 class SourceRouter(DataSource):
-    def __init__(self, default_source: DataSource, source_by_asset: Mapping[str, DataSource]):
+    def __init__(
+        self,
+        default_source: DataSource,
+        source_by_asset: Mapping[str, DataSource],
+        *,
+        allowed_asset_types: list[str] | None = None,
+    ):
         self.default_source = default_source
         self.source_by_asset = dict(source_by_asset)
+        self.allowed_asset_types = set(allowed_asset_types or list(source_by_asset.keys()) + ["stock"])
         self.current_asset_type: str | None = None
 
     def set_asset_type(self, asset_type: str) -> None:
+        if asset_type not in self.allowed_asset_types:
+            raise ValueError(f"unsupported asset_type: {asset_type}")
         self.current_asset_type = asset_type
 
     def list_symbols(
@@ -39,8 +48,10 @@ class SourceRouter(DataSource):
         return self._select(self.current_asset_type).fetch_ohlcv(symbol, interval, start, end, adjust)
 
     def _select(self, asset_type: str | None) -> DataSource:
+        if asset_type is not None and asset_type not in self.allowed_asset_types:
+            raise ValueError(f"unsupported asset_type: {asset_type}")
         if asset_type and asset_type in self.source_by_asset:
             return self.source_by_asset[asset_type]
-        if self.default_source is None:
-            raise ValueError(f"no source for asset_type={asset_type}")
+        if not self.default_source:
+            raise ValueError(f"unsupported asset_type: {asset_type}")
         return self.default_source

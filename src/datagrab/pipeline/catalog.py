@@ -3,7 +3,6 @@ from __future__ import annotations
 import contextlib
 import csv
 import io
-import random
 import re
 import time
 from datetime import datetime, timedelta
@@ -11,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from ..config import CatalogConfig, FilterConfig
+from ..config import CatalogConfig, FilterConfig, YFinanceConfig
 from ..fsutils import atomic_write_text, ensure_dir
 from ..logging import get_logger
 from ..sources.base import SymbolInfo
@@ -39,7 +38,7 @@ class CatalogResult:
     source: str
     """筛选后总条数（截断 limit 前）；与 len(items) 一致当 limit 为 None 时"""
     total_count: int = 0
-    """从本次目录数据中提取的交易所/板块/基金子类选项，供 TUI 动态更新下拉（非硬编码）"""
+    """从本次目录数据中提取的交易所/板块/基金子类选项（非硬编码）"""
     exchange_options: list[tuple[str, str]] = ()
     market_options: list[tuple[str, str]] = ()
     fund_options: list[tuple[str, str]] = ()
@@ -335,7 +334,7 @@ def filter_options_from_items(
     list[tuple[str, str]],
     list[tuple[str, str]],
 ]:
-    """从目录条目中提取交易所/板块/基金子类选项（用于 TUI 动态下拉），避免硬编码。"""
+    """从目录条目中提取交易所/板块/基金子类选项，避免硬编码。"""
     exchanges = sorted(set(item.exchange for item in items if item.exchange))
     markets = sorted(set(item.market_category for item in items if item.market_category))
     funds = sorted(set(item.fund_category for item in items if item.fund_category))
@@ -349,10 +348,18 @@ def filter_options_from_items(
 
 
 class CatalogService:
-    def __init__(self, data_root: Path, config: CatalogConfig, filters: FilterConfig):
+    def __init__(
+        self,
+        data_root: Path,
+        config: CatalogConfig,
+        filters: FilterConfig,
+        *,
+        yfinance_config: YFinanceConfig | None = None,
+    ):
         self.data_root = Path(data_root)
         self.config = config
         self.filters = filters
+        self._yfinance_proxy = (yfinance_config.proxy or "").strip() if yfinance_config else None
         self.logger = get_logger("datagrab.catalog")
 
     def set_data_root(self, data_root: Path) -> None:
@@ -428,7 +435,7 @@ class CatalogService:
         if last_error:
             msg += f". 拉取失败原因: {last_error}"
         if asset_type == "stock":
-            msg += " (美股列表需访问 ftp.nasdaqtrader.com，若在国内可配置代理后 --refresh)"
+            msg += " (美股列表需访问 NASDAQ 列表源，若在国内可配置代理后再尝试 --refresh)"
         raise RuntimeError(msg)
 
     def _fetch_with_retry(
@@ -488,7 +495,13 @@ class CatalogService:
         }
         items: list[SymbolInfo] = []
         try:
-            with httpx.Client(timeout=15.0, headers=headers) as client:
+            client_kwargs = {"timeout": 15.0, "headers": headers}
+            if self._yfinance_proxy:
+                client_kwargs["proxies"] = {
+                    "http://": self._yfinance_proxy,
+                    "https://": self._yfinance_proxy,
+                }
+            with httpx.Client(**client_kwargs) as client:
                 resp = client.get(
                     _YAHOO_SCREENER_URL,
                     params={"scrIds": scr_id, "count": 250},
@@ -543,7 +556,13 @@ class CatalogService:
         self.logger.info("stock catalog: 正在检测 %s 连通性...", host)
         # VPN/跨境时 SSL 握手较慢，给足超时（25s）
         try:
-            with httpx.Client(timeout=25.0) as client:
+            client_kwargs = {"timeout": 25.0}
+            if self._yfinance_proxy:
+                client_kwargs["proxies"] = {
+                    "http://": self._yfinance_proxy,
+                    "https://": self._yfinance_proxy,
+                }
+            with httpx.Client(**client_kwargs) as client:
                 resp = client.get(url)
                 resp.raise_for_status()
         except Exception as exc:
@@ -558,64 +577,6 @@ class CatalogService:
                 f"无法连接 {host}（美股列表地址）。{hint} 详细错误: {detail}"
             ) from exc
         self.logger.info("stock catalog: 连通性正常，开始下载列表")
-
-    def _enrich_us_stock_sectors(
-        self, items: list[SymbolInfo], progress_callback: ProgressCallback | None = None
-    ) -> list[SymbolInfo]:
-        """从 Yahoo Finance 批量获取美股行业(sector)，写入 market_category 供板块筛选。"""
-        import contextlib
-        import io
-
-        def _progress(step: str, status: str, detail: str | None = None) -> None:
-            if progress_callback:
-                progress_callback(step, status, detail)
-
-        try:
-            import yfinance as yf
-        except Exception as exc:
-            self.logger.warning("yfinance not available for sector enrichment: %s", exc)
-            return items
-        total = len(items)
-        self.logger.info(
-            "stock catalog: 开始行业(sector)拉取，共 %d 只标的，按批 50 只、批间间隔 1s，可能需数分钟",
-            total,
-        )
-        batch_size = 50
-        delay_between_batches = 1.0
-        progress_interval = 10  # 每 10 批打一次进度
-        enriched: list[SymbolInfo] = []
-        for i in range(0, len(items), batch_size):
-            batch = items[i : i + batch_size]
-            for item in batch:
-                sector_raw = None
-                try:
-                    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-                        ticker = yf.Ticker(item.symbol)
-                        sector_raw = (ticker.info or {}).get("sector")
-                except Exception as exc:
-                    self.logger.debug("sector lookup %s: %s", item.symbol, exc)
-                sector_canonical = normalize_market_value(sector_raw) if sector_raw else None
-                enriched.append(
-                    SymbolInfo(
-                        symbol=item.symbol,
-                        name=item.name,
-                        exchange=item.exchange,
-                        asset_type=item.asset_type,
-                        market_category=sector_canonical or item.market_category,
-                        is_etf=item.is_etf,
-                        is_fund=item.is_fund,
-                        fund_category=item.fund_category,
-                    )
-                )
-            batch_index = i // batch_size
-            if (batch_index + 1) % progress_interval == 0 or i + batch_size >= len(items):
-                done = min(i + batch_size, len(items))
-                self.logger.info("stock catalog: 行业拉取进度 %d / %d", done, total)
-                _progress("sector_enrich", "progress", f"{done}/{total}")
-            if i + batch_size < len(items):
-                time.sleep(delay_between_batches)
-        self.logger.info("stock catalog: 行业拉取完成，共 %d 只", len(enriched))
-        return enriched
 
     def _fetch_stock_catalog(self, progress_callback: ProgressCallback | None = None) -> list[SymbolInfo]:
         def _progress(step: str, status: str, detail: str | None = None) -> None:
@@ -642,10 +603,8 @@ class CatalogService:
                 deduped[item.symbol] = item
         result = list(deduped.values())
         _progress("download_other", "done", str(len(result)))
-        # sector enrichment (yf.Ticker().info per symbol) 已移除：
-        # 对 8000+ 只美股逐只 HTTP 查询行业信息耗时数小时，不可行。
+        # 逐只 sector enrichment 已移除：对 8000+ 美股逐只 HTTP 查询行业信息耗时非常高。
         # 板块筛选改用 NASDAQ 原始 Market Category (Q/G/S) 及 exchange 字段。
-        random.shuffle(result)
         self.logger.info("stock catalog: 美股目录拉取完成，共 %d 只", len(result))
         return result
 
@@ -653,7 +612,13 @@ class CatalogService:
         import httpx
 
         # VPN/跨境时连接与下载均较慢，使用较长超时
-        with httpx.Client(timeout=30.0) as client:
+        client_kwargs = {"timeout": 30.0}
+        if self._yfinance_proxy:
+            client_kwargs["proxies"] = {
+                "http://": self._yfinance_proxy,
+                "https://": self._yfinance_proxy,
+            }
+        with httpx.Client(**client_kwargs) as client:
             resp = client.get(url)
             resp.raise_for_status()
             return resp.text
@@ -751,7 +716,7 @@ class CatalogService:
         return []
 
     def _fetch_ashare_etf_via_baostock(self, seen: set[str]) -> list[SymbolInfo]:
-        """从 baostock query_all_stock 中提取 ETF（代码前缀过滤），跳过 seen 中已有的。"""
+        """从 baostock query_all_stock 中提取 ETF（代码前缀过滤），按天数回退最多 7 天，跳过 seen 中已有的。"""
         try:
             import baostock as bs
         except ImportError:
