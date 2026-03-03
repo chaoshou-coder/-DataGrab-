@@ -20,20 +20,26 @@ from .rate_limiter import RateLimiter
 from .sources.baostock_source import BaostockDataSource
 from .sources.router import SourceRouter
 from .sources.yfinance_source import YFinanceDataSource
+from .sources.tickterial_source import TickterialDataSource
 from .storage.export import export_backtrader_csv, export_vectorbt_npz
 from .storage.quality import Severity
 from .storage.validate import BatchProgress, iter_parquet_files, validate_batch
-from .timeutils import DateRange, default_date_range, parse_date
+from .timeutils import DateRange, default_date_range, parse_date, set_timezone
 from .validation import (
     CliValidationError,
     ValidationFailureRecordError,
     validate_cli_args,
     render_cli_error,
 )
+from .tickterial import bridge as tickterial_bridge
+from .tickterial import check as tickterial_check
+from .tickterial import download as tickterial_download
+from .tickterial import repair as tickterial_repair
 
 
 _WIZARD_BACK = "<wizard_back>"
 _WIZARD_ASSET_TYPES = ("stock", "ashare", "forex", "crypto", "commodity")
+_WIZARD_SOURCES = ("auto", "yfinance", "baostock", "tickterial")
 _WIZARD_INTERVALS = ("1m", "2m", "5m", "15m", "30m", "60m", "90m", "1h", "1d", "5d", "1wk", "1mo", "3mo")
 
 
@@ -79,12 +85,19 @@ def build_parser() -> argparse.ArgumentParser:
         default="stock,ashare",
         help="更新范围：stock（美股）,ashare（A股）或 stock（仅美股）",
     )
+    update_symbols_parser.add_argument("--source", default="", help="data source for symbol update (e.g. tickterial)")
     _add_filter_args(update_symbols_parser)
 
     dl_parser = subparsers.add_parser("download", help="download historical data")
     dl_parser.add_argument("--asset-type", type=str, default="stock")
     dl_parser.add_argument("--symbols", type=str, help="comma separated symbols")
     dl_parser.add_argument("--symbol", action="append", help="single symbol (repeatable)")
+    dl_parser.add_argument(
+        "--source",
+        type=str,
+        default="auto",
+        help="auto|yfinance|baostock|tickterial",
+    )
     dl_parser.add_argument("--intervals", type=str, help="comma separated intervals")
     dl_parser.add_argument("--start", type=str)
     dl_parser.add_argument("--end", type=str)
@@ -101,6 +114,32 @@ def build_parser() -> argparse.ArgumentParser:
         "--strict-failures-csv",
         action="store_true",
         help="failures 文件中存在任何错误行时立即中断",
+    )
+    dl_parser.add_argument(
+        "--tickterial-output",
+        default="",
+        help="tickterial 专属输出目录（默认: <data-root>/tickterial_csv）",
+    )
+    dl_parser.add_argument("--tickterial-cache-dir", default="", help="tickterial 缓存目录（默认: 配置中的 cache_dir）")
+    dl_parser.add_argument("--tickterial-workers", type=int, default=None, help="tickterial 下载并发 worker 数")
+    dl_parser.add_argument("--tickterial-max-retries", type=int, default=None, help="tickterial 每小时下载重试次数")
+    dl_parser.add_argument("--tickterial-retry-delay", type=float, default=None, help="tickterial 基础重试间隔秒")
+    dl_parser.add_argument("--tickterial-batch-size", type=int, default=None, help="tickterial 下载批次大小")
+    dl_parser.add_argument("--tickterial-batch-pause-ms", type=int, default=None, help="tickterial 批次间隔毫秒")
+    dl_parser.add_argument("--tickterial-retry-jitter-ms", type=int, default=None, help="tickterial 抖动毫秒")
+    dl_parser.add_argument(
+        "--tickterial-source-timestamp-shift-hours",
+        type=float,
+        default=None,
+        help="tickterial tick timestamp shift hours",
+    )
+    dl_parser.add_argument("--tickterial-force", action="store_true", help="tickterial 覆盖同名 CSV")
+    dl_parser.add_argument("--tickterial-validate", action="store_true", help="tickterial 任务完成后执行校验")
+    dl_parser.add_argument(
+        "--tickterial-strict-validate",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="tickterial 严格校验失败即退出",
     )
     _add_filter_args(dl_parser)
 
@@ -136,6 +175,56 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="parallel worker threads (default: auto = cpu_count)",
     )
+    validate_parser.add_argument("--start", type=str, help="tickterial CSV 校验起始时间")
+    validate_parser.add_argument("--end", type=str, help="tickterial CSV 校验结束时间")
+    validate_parser.add_argument(
+        "--tickterial-output",
+        default="",
+        help="tickterial CSV 校验目录（默认 <data-root>/tickterial_csv）",
+    )
+
+    repair_parser = subparsers.add_parser("repair", help="repair tickterial CSV outputs")
+    repair_parser.add_argument("--symbol", required=True, help="target symbol")
+    repair_parser.add_argument("--start", required=True, help="start datetime, e.g. 2016-01-01T00:00:00")
+    repair_parser.add_argument("--end", required=True, help="end datetime, e.g. 2026-01-01T00:00:00")
+    repair_parser.add_argument("--output", default="tickterial_csv", help="tickterial output directory")
+    repair_parser.add_argument("--cache-dir", default="", help="tickterial cache dir")
+    repair_parser.add_argument("--intervals", default="1m,5m,15m,1d", help="repair intervals")
+    repair_parser.add_argument("--max-retries", type=int, default=6)
+    repair_parser.add_argument("--retry-delay", type=float, default=2.0)
+    repair_parser.add_argument("--download-workers", type=int, default=4)
+    repair_parser.add_argument("--batch-size", type=int, default=8)
+    repair_parser.add_argument("--batch-pause-ms", type=int, default=1000)
+    repair_parser.add_argument("--retry-jitter-ms", type=int, default=300)
+    repair_parser.add_argument("--source-timestamp-shift-hours", type=float, default=8.0)
+    repair_parser.add_argument("--log-level", default="WARNING", choices=["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"])
+    repair_parser.add_argument("--suppress-tickloader-info", action="store_true")
+    repair_parser.add_argument(
+        "--validate",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="run OHLCV consistency checks in repaired windows",
+    )
+    repair_parser.add_argument(
+        "--strict-validate",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="pass strict validation flag to repair commands",
+    )
+    repair_parser.add_argument("--check-row-count", action=argparse.BooleanOptionalAction, default=True)
+    repair_parser.add_argument("--check-1d-alignment", action=argparse.BooleanOptionalAction, default=True)
+    repair_parser.add_argument("--prefer-local-1m-for-1d", action=argparse.BooleanOptionalAction, default=True)
+    repair_parser.add_argument("--force", action=argparse.BooleanOptionalAction, default=False)
+    repair_parser.add_argument("--failures-csv", default="")
+    repair_parser.add_argument("--dry-run", action="store_true")
+
+    bridge_parser = subparsers.add_parser("bridge", help="convert tickterial CSV to parquet")
+    bridge_parser.add_argument("--input-dir", required=True, help="tickterial csv 目录")
+    bridge_parser.add_argument("--output-root", default="data", help="parquet 输出根目录")
+    bridge_parser.add_argument("--asset-type", default="commodity", help="asset type")
+    bridge_parser.add_argument("--symbol", default="", help="symbol filter")
+    bridge_parser.add_argument("--interval", default="", help="interval filter")
+    bridge_parser.add_argument("--merge-on-incremental", action="store_true", help="merge when exists")
 
     subparsers.add_parser("wizard", help="交互式预览并确认后执行更新/下载/验数")
 
@@ -652,6 +741,14 @@ def _run_doctor(args: argparse.Namespace, config, logger) -> int:
 
 
 def _run_validate(args: argparse.Namespace, cli_args, config, logger) -> int:
+    if cli_args.format == "csv" and (
+        args.start
+        or args.end
+        or getattr(args, "tickterial_output", None)
+        or args.path
+    ):
+        return _run_tickterial_validate(args, config, logger)
+
     root_arg = getattr(args, "path", None) or getattr(args, "root", None)
     root = Path(root_arg).resolve() if root_arg else config.data_root_path
     asset_type = cli_args.asset_type
@@ -767,6 +864,113 @@ def _run_validate(args: argparse.Namespace, cli_args, config, logger) -> int:
     return 1 if error_count > 0 else 0
 
 
+def _parse_tickterial_csv_meta(path: Path) -> tuple[str, str, datetime, datetime] | None:
+    stem = path.stem
+    parts = stem.split("_")
+    if len(parts) != 4:
+        return None
+    symbol, interval, start_tag, end_tag = parts
+    try:
+        start = datetime.strptime(start_tag, "%Y%m%d")
+        end = datetime.strptime(end_tag, "%Y%m%d")
+    except ValueError:
+        return None
+    return symbol.upper(), interval, start, end
+
+
+def _infer_tickterial_window_range(
+    output_dir: Path,
+    symbol: str,
+    interval: str,
+) -> tuple[datetime, datetime] | None:
+    earliest: datetime | None = None
+    latest: datetime | None = None
+    for csv_file in output_dir.glob("*.csv"):
+        parsed = _parse_tickterial_csv_meta(csv_file)
+        if parsed is None:
+            continue
+        file_symbol, file_interval, file_start, file_end = parsed
+        if symbol and file_symbol != symbol:
+            continue
+        if interval and file_interval != interval:
+            continue
+        if earliest is None or file_start < earliest:
+            earliest = file_start
+        if latest is None or file_end > latest:
+            latest = file_end
+    if earliest is None or latest is None:
+        return None
+    return earliest, latest
+
+
+def _run_tickterial_validate(
+    args: argparse.Namespace,
+    config,
+    logger,
+) -> int:
+    output_root = (getattr(args, "tickterial_output", "") or "").strip()
+    if output_root:
+        output_dir = Path(output_root).resolve()
+    elif getattr(args, "path", None):
+        output_dir = Path(args.path).resolve()
+    else:
+        output_dir = config.data_root_path / "tickterial_csv"
+
+    symbol = (args.symbol or "").strip().upper()
+    if not symbol:
+        symbols = config.tickterial.symbols
+    else:
+        symbols = [symbol]
+    interval = (args.interval or "").strip()
+
+    if args.start:
+        try:
+            start = parse_date(args.start)
+        except Exception as exc:
+            print(f"invalid --start: {exc}", file=sys.stderr)
+            return 2
+    else:
+        start = None
+    if args.end:
+        try:
+            end = parse_date(args.end)
+        except Exception as exc:
+            print(f"invalid --end: {exc}", file=sys.stderr)
+            return 2
+    else:
+        end = None
+    if (start is None) != (end is None):
+        print("请同时提供 --start 和 --end，或不提供以自动推断", file=sys.stderr)
+        return 2
+    if start is None and end is None:
+        inferred = _infer_tickterial_window_range(output_dir, symbol, interval)
+        if inferred is None:
+            print("未检测到可用的 tickterial csv 文件，且未指定 --start/--end", file=sys.stderr)
+            return 2
+        start, end = inferred
+
+    check_args: list[str] = [
+        "--symbols",
+        ",".join(symbols),
+        "--start",
+        start.isoformat(),
+        "--end",
+        end.isoformat(),
+        "--output",
+        str(output_dir),
+    ]
+    if interval:
+        check_args.extend(["--intervals", interval])
+    if args.out:
+        if args.out.lower().endswith(".json"):
+            check_args.extend(["--report-json", args.out])
+        else:
+            check_args.extend(["--report-csv", args.out])
+    check_ns = tickterial_check.parse_args(check_args)
+    logger.info("validating tickterial csv: %s", output_dir)
+    return tickterial_check.main(check_ns)
+
+
 def _extract_global_args(argv: list[str] | None) -> tuple[argparse.Namespace, list[str]]:
     global_parser = argparse.ArgumentParser(add_help=False)
     global_parser.add_argument("--config", "-c", type=str, default=None)
@@ -777,6 +981,27 @@ def _extract_global_args(argv: list[str] | None) -> tuple[argparse.Namespace, li
     return global_ns, list(remaining)
 
 
+def _run_update_symbols_tickterial(args: argparse.Namespace, logger) -> int:
+    from datagrab.tickterial.symbols import refresh_from_dukascopy, SYMBOL_CATEGORIES
+    from datagrab.tickterial.exceptions import FetchError
+    logger.info("fetching latest Dukascopy instrument list...")
+    try:
+        updated = refresh_from_dukascopy()
+    except FetchError as exc:
+        logger.error("symbol update failed: %s", exc)
+        return 1
+    old_all = set(s for syms in SYMBOL_CATEGORIES.values() for s in syms)
+    new_all = set(s for syms in updated.values() for s in syms)
+    added = sorted(new_all - old_all)
+    removed = sorted(old_all - new_all)
+    logger.info("update-symbols result: total=%d added=%d removed=%d", len(new_all), len(added), len(removed))
+    if added:
+        logger.info("added: %s", ", ".join(added[:20]))
+    if removed:
+        logger.info("removed: %s", ", ".join(removed[:20]))
+    return 0
+
+
 def _run_update_symbols(
     args: argparse.Namespace,
     config,
@@ -784,7 +1009,10 @@ def _run_update_symbols(
     logger,
     *,
     asset_types: tuple[str, ...] | None = None,
-) -> None:
+) -> int | None:
+    source = getattr(args, "source", "").strip().lower() if hasattr(args, "source") else ""
+    if source == "tickterial":
+        return _run_update_symbols_tickterial(args, logger)
     filters_override = merge_filters(config.filters, _filters_from_args(args))
     targets = asset_types or _normalize_asset_types(getattr(args, "asset_types", None))
     for asset_type in targets:
@@ -848,19 +1076,80 @@ def _run_catalog(args: argparse.Namespace, cli_args, config, catalog_service: Ca
     )
 
 
-def _run_download(args: argparse.Namespace, cli_args, config, catalog_service, source, writer, logger) -> int:
-    source.set_asset_type(cli_args.asset_type or "stock")
+def _run_download(
+    args: argparse.Namespace,
+    cli_args,
+    config,
+    catalog_service,
+    source,
+    writer,
+    logger,
+    *,
+    yfinance_source=None,
+    baostock_source=None,
+    tickterial_source=None,
+) -> int:
+    selected_source = (cli_args.source or "auto").strip().lower()
+    if selected_source not in _WIZARD_SOURCES:
+        logger.warning("unsupported source=%s, fallback to auto", selected_source)
+        selected_source = "auto"
+
+    if selected_source == "tickterial":
+        set_timezone("UTC" if config.tickterial.force_utc_timezone else config.timezone)
+    else:
+        set_timezone(config.timezone)
+
+    if selected_source == "auto":
+        source.clear_source_override()
+    elif selected_source == "yfinance":
+        if yfinance_source is None:
+            raise RuntimeError("yfinance source not initialized")
+        source.set_source(yfinance_source)
+    elif selected_source == "baostock":
+        if baostock_source is None:
+            raise RuntimeError("baostock source not initialized")
+        source.set_source(baostock_source)
+    elif selected_source == "tickterial":
+        if tickterial_source is None:
+            raise RuntimeError("tickterial source not initialized")
+        source.set_source(tickterial_source)
     symbols = _parse_symbols(args)
     if not symbols:
-        filters_override = merge_filters(config.filters, _filters_from_args(args))
-        result = catalog_service.get_catalog(
-            asset_type=cli_args.asset_type or "stock",
-            refresh=False,
-            limit=args.limit or config.catalog.limit,
-            filters_override=filters_override,
+        if selected_source == "tickterial":
+            symbols = [item.strip().upper() for item in config.tickterial.symbols if item.strip()]
+            if not symbols:
+                raise RuntimeError("tickterial 源未配置 symbol 列表，请通过 tickterial.symbols 配置")
+        else:
+            filters_override = merge_filters(config.filters, _filters_from_args(args))
+            result = catalog_service.get_catalog(
+                asset_type=cli_args.asset_type or "stock",
+                refresh=False,
+                limit=args.limit or config.catalog.limit,
+                filters_override=filters_override,
+            )
+            symbols = [item.symbol for item in result.items]
+    raw_intervals = cli_args.intervals if cli_args.intervals else config.intervals_default
+    if isinstance(raw_intervals, str):
+        intervals = [item.strip() for item in raw_intervals.split(",") if item.strip()]
+    else:
+        intervals = list(raw_intervals)
+    if selected_source == "tickterial":
+        default_download_range = default_date_range()
+        selected_range = DateRange(
+            cli_args.start if cli_args.start else default_download_range.start,
+            cli_args.end if cli_args.end else default_download_range.end,
         )
-        symbols = [item.symbol for item in result.items]
-    intervals = cli_args.intervals if cli_args.intervals else config.intervals_default
+        return _run_download_tickterial(
+            args=args,
+            cli_args=cli_args,
+            config=config,
+            symbols=symbols,
+            intervals=intervals,
+            date_range=selected_range,
+            logger=logger,
+        )
+    if not intervals:
+        raise RuntimeError("no valid intervals")
     date_range = default_date_range()
     if cli_args.start:
         date_range = DateRange(cli_args.start, date_range.end)
@@ -920,7 +1209,182 @@ def _run_download(args: argparse.Namespace, cli_args, config, catalog_service, s
     return 0
 
 
-def _run_wizard(config, catalog_service, source, writer, logger) -> int:
+def _run_download_tickterial(
+    *,
+    args: argparse.Namespace,
+    cli_args,
+    config,
+    symbols: list[str],
+    intervals: list[str],
+    date_range,
+    logger,
+) -> int:
+    output = (getattr(cli_args, "tickterial_output", "") or "").strip()
+    if output:
+        output_dir = Path(output)
+    else:
+        output_dir = config.data_root_path / "tickterial_csv"
+    cache_dir = (getattr(cli_args, "tickterial_cache_dir", "") or "").strip() or config.tickterial.cache_dir
+    max_retries = (
+        getattr(cli_args, "tickterial_max_retries", None)
+        if getattr(cli_args, "tickterial_max_retries", None) is not None
+        else config.tickterial.max_retries
+    )
+    retry_delay = (
+        getattr(cli_args, "tickterial_retry_delay", None)
+        if getattr(cli_args, "tickterial_retry_delay", None) is not None
+        else 1.5
+    )
+    download_workers = (
+        getattr(cli_args, "tickterial_workers", None)
+        if getattr(cli_args, "tickterial_workers", None) is not None
+        else 4
+    )
+    batch_size = (
+        getattr(cli_args, "tickterial_batch_size", None)
+        if getattr(cli_args, "tickterial_batch_size", None) is not None
+        else 8
+    )
+    batch_pause_ms = (
+        getattr(cli_args, "tickterial_batch_pause_ms", None)
+        if getattr(cli_args, "tickterial_batch_pause_ms", None) is not None
+        else 1000
+    )
+    retry_jitter_ms = (
+        getattr(cli_args, "tickterial_retry_jitter_ms", None)
+        if getattr(cli_args, "tickterial_retry_jitter_ms", None) is not None
+        else 300
+    )
+    source_shift = (
+        getattr(cli_args, "tickterial_source_timestamp_shift_hours", None)
+        if getattr(cli_args, "tickterial_source_timestamp_shift_hours", None) is not None
+        else config.tickterial.source_timestamp_shift_hours
+    )
+    strict_validate = getattr(cli_args, "tickterial_strict_validate", None)
+    resume_failures = getattr(args, "failures_file", "") or ""
+
+    tick_args = argparse.Namespace(
+        symbols=",".join(symbols),
+        start=date_range.start.isoformat(),
+        end=date_range.end.isoformat(),
+        output=str(output_dir),
+        cache_dir=str(cache_dir),
+        intervals=",".join(intervals) if intervals else "1m,5m,15m,1d",
+        max_retries=max_retries,
+        retry_delay=retry_delay,
+        download_workers=download_workers,
+        batch_size=batch_size,
+        batch_pause_ms=batch_pause_ms,
+        retry_jitter_ms=retry_jitter_ms,
+        source_timestamp_shift_hours=source_shift,
+        resume_failures=resume_failures,
+        validate=bool(getattr(cli_args, "tickterial_validate", False)),
+        strict_validate=True if strict_validate is None else bool(strict_validate),
+        window_retries=1,
+        log_level=cli_args.log_level,
+        suppress_tickloader_info=False,
+        force=bool(getattr(cli_args, "tickterial_force", False)),
+    )
+    logger.info(
+        "running tickterial download symbol=%s output=%s intervals=%s",
+        symbols[0] if len(symbols) == 1 else f"{len(symbols)} symbols",
+        output_dir,
+        tick_args.intervals,
+    )
+    return tickterial_download.run(tick_args)
+
+
+def _run_tickterial_repair(args: argparse.Namespace, logger) -> int:
+    interval_arg = args.intervals
+    if isinstance(interval_arg, list):
+        interval_arg = ",".join(interval_arg)
+    repair_argv = [
+        "--symbol",
+        args.symbol,
+        "--start",
+        args.start,
+        "--end",
+        args.end,
+        "--output",
+        str(Path(args.output).resolve()),
+        "--intervals",
+        interval_arg,
+    ]
+    cache_dir = (getattr(args, "cache_dir", "") or "").strip()
+    if cache_dir:
+        repair_argv.extend(["--cache-dir", cache_dir])
+    repair_argv.extend(
+        [
+            "--max-retries",
+            str(args.max_retries),
+            "--retry-delay",
+            str(args.retry_delay),
+            "--download-workers",
+            str(args.download_workers),
+            "--batch-size",
+            str(args.batch_size),
+            "--batch-pause-ms",
+            str(args.batch_pause_ms),
+            "--retry-jitter-ms",
+            str(args.retry_jitter_ms),
+            "--source-timestamp-shift-hours",
+            str(getattr(args, "source_timestamp_shift_hours", 8.0)),
+            "--log-level",
+            args.log_level,
+        ]
+    )
+    if args.failures_csv:
+        repair_argv.extend(["--failures-csv", args.failures_csv])
+    if args.suppress_tickloader_info:
+        repair_argv.append("--suppress-tickloader-info")
+    for option_name, value in (
+        ("validate", getattr(args, "validate", True)),
+        ("strict-validate", getattr(args, "strict_validate", True)),
+        ("check-row-count", getattr(args, "check_row_count", True)),
+        ("check-1d-alignment", getattr(args, "check_1d_alignment", True)),
+        ("prefer-local-1m-for-1d", getattr(args, "prefer_local_1m_for_1d", True)),
+        ("dry-run", getattr(args, "dry_run", False)),
+        ("force", getattr(args, "force", False)),
+    ):
+        if value:
+            repair_argv.append(f"--{option_name}")
+        elif option_name not in {"dry-run", "force"}:
+            repair_argv.append(f"--no-{option_name}")
+    repaired_ns = tickterial_repair.parse_args(repair_argv)
+    logger.info("running tickterial repair: symbol=%s output=%s", args.symbol, args.output)
+    return tickterial_repair.main(repaired_ns)
+
+
+def _run_tickterial_bridge(args: argparse.Namespace, logger) -> int:
+    bridge_args = [
+        "--input-dir",
+        str(Path(args.input_dir).resolve()),
+        "--output-root",
+        args.output_root,
+        "--asset-type",
+        args.asset_type,
+    ]
+    if args.merge_on_incremental:
+        bridge_args.append("--merge-on-incremental")
+    if args.symbol:
+        bridge_args.extend(["--symbol", args.symbol])
+    if args.interval:
+        bridge_args.extend(["--interval", args.interval])
+    bridge_ns = tickterial_bridge.parse_args(bridge_args)
+    logger.info("running tickterial bridge: input=%s output=%s", bridge_args[1], bridge_args[3])
+    return tickterial_bridge.run(bridge_ns)
+
+
+def _run_wizard(
+    config,
+    catalog_service,
+    source,
+    writer,
+    logger,
+    yfinance_source,
+    baostock_source,
+    tickterial_source,
+) -> int:
     while True:
         print("wizard: 请选择要执行的流程")
         print("1) 更新 symbol")
@@ -1259,7 +1723,18 @@ def _run_wizard(config, catalog_service, source, writer, logger) -> int:
                 _apply_data_root_override(config, cli_ns)
                 catalog_service.set_data_root(config.data_root_path)
                 writer.set_data_root(config.data_root_path)
-                return _run_download(fake_ns, cli_ns, config, catalog_service, source, writer, logger)
+                return _run_download(
+                    fake_ns,
+                    cli_ns,
+                    config,
+                    catalog_service,
+                    source,
+                    writer,
+                    logger,
+                    yfinance_source=yfinance_source,
+                    baostock_source=baostock_source,
+                    tickterial_source=tickterial_source,
+                )
 
         if mode == "3":
             step = 0
@@ -1549,10 +2024,23 @@ def main(argv: list[str] | None = None) -> None:
             sys.exit(exit_code)
         return
 
+    if args.command == "repair":
+        exit_code = _run_tickterial_repair(args, logger)
+        if exit_code:
+            sys.exit(exit_code)
+        return
+
+    if args.command == "bridge":
+        exit_code = _run_tickterial_bridge(args, logger)
+        if exit_code:
+            sys.exit(exit_code)
+        return
+
     catalog_service = CatalogService(config.data_root_path, config.catalog, config.filters, yfinance_config=config.yfinance)
     rate_limiter = RateLimiter(config.rate_limit)
     yfinance_source = YFinanceDataSource(config, rate_limiter, catalog_service)
     baostock_source = BaostockDataSource(config, rate_limiter, catalog_service)
+    tickterial_source = TickterialDataSource(config, rate_limiter, catalog_service)
     source = SourceRouter(yfinance_source, {"ashare": baostock_source}, allowed_asset_types=config.asset_types)
     writer = ParquetWriter(config.data_root_path, merge_on_incremental=config.storage.merge_on_incremental)
 
@@ -1561,17 +2049,39 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     if args.command == "update-symbols":
-        _run_update_symbols(args, config, catalog_service, logger)
+        exit_code = _run_update_symbols(args, config, catalog_service, logger)
+        if exit_code:
+            sys.exit(exit_code)
         return
 
     if args.command == "download":
-        exit_code = _run_download(args, cli_args, config, catalog_service, source, writer, logger)
+        exit_code = _run_download(
+            args,
+            cli_args,
+            config,
+            catalog_service,
+            source,
+            writer,
+            logger,
+            yfinance_source=yfinance_source,
+            baostock_source=baostock_source,
+            tickterial_source=tickterial_source,
+        )
         if exit_code:
             sys.exit(exit_code)
         return
 
     if args.command == "wizard":
-        exit_code = _run_wizard(config, catalog_service, source, writer, logger)
+        exit_code = _run_wizard(
+            config,
+            catalog_service,
+            source,
+            writer,
+            logger,
+            yfinance_source,
+            baostock_source,
+            tickterial_source,
+        )
         if exit_code:
             sys.exit(exit_code)
         return

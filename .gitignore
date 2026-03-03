@@ -19,10 +19,17 @@ build/
 sample/
 .pytest_cache/
 .ruff_cache/
-# 测试目录不纳入版本（按现有要求忽略 tests/）
-tests/
-
-
+.mypy_cache/
+.tick-data/
+.tmp_tickterial_pkg/
+.tmp_tick_check2/
+.tmp_tick_strict_test/
+.tmp*
+tmp_fx.txt
+instruments_index_links.txt
+*.log
+.coverage
+htmlcov/
 # 环境
 *.venv/
 venv/

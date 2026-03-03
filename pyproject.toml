@@ -5,12 +5,12 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "datagrab"
 version = "0.1.0"
-description = "财采 (DataGrab): 多市场财经数据采集，支持美股/A股、CLI、断点续传与增量更新"
+description = "财采 (DataGrab): 多市场财经数据采集，支持美股/A股/外汇/贵金属/大宗商品/加密货币，CLI、断点续传与增量更新，内置 Dukascopy tickterial 数据源"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "DataGrab Contributors" }]
-keywords = ["finance", "yahoo", "baostock", "ashare", "ohlcv", "parquet", "datagrab"]
+keywords = ["finance", "yahoo", "baostock", "ashare", "ohlcv", "parquet", "datagrab", "dukascopy", "tickterial", "forex", "commodity", "crypto"]
 classifiers = [
   "License :: OSI Approved :: MIT License",
   "Programming Language :: Python :: 3",
@@ -28,10 +28,11 @@ dependencies = [
   "rich>=13.7.0",
   "numpy>=1.26.0",
   "pandas>=2.0.0",
-  "baostock",
+  "baostock>=0.8.8",
   "akshare>=1.14.0",
   "tzdata>=2024.1",
   "pydantic>=2.7.0",
+  "tickterial>=1.1.2",
 ]
 
 [project.urls]
@@ -46,3 +47,22 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.ruff.isort]
+known-first-party = ["datagrab"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+pythonpath = ["src"]

@@ -27,6 +27,7 @@ class SymbolInfo:
 class OhlcvResult:
     data: pl.DataFrame
     adjustment: str | None = None
+    metadata: dict[str, str] | None = None
 
 
 class DataSource(ABC):

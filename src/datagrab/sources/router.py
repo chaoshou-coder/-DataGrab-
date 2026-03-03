@@ -20,11 +20,18 @@ class SourceRouter(DataSource):
         self.source_by_asset = dict(source_by_asset)
         self.allowed_asset_types = set(allowed_asset_types or list(source_by_asset.keys()) + ["stock"])
         self.current_asset_type: str | None = None
+        self._forced_source: DataSource | None = None
 
     def set_asset_type(self, asset_type: str) -> None:
         if asset_type not in self.allowed_asset_types:
             raise ValueError(f"unsupported asset_type: {asset_type}")
         self.current_asset_type = asset_type
+
+    def set_source(self, source: DataSource | None) -> None:
+        self._forced_source = source
+
+    def clear_source_override(self) -> None:
+        self._forced_source = None
 
     def list_symbols(
         self,
@@ -48,6 +55,8 @@ class SourceRouter(DataSource):
         return self._select(self.current_asset_type).fetch_ohlcv(symbol, interval, start, end, adjust)
 
     def _select(self, asset_type: str | None) -> DataSource:
+        if self._forced_source is not None:
+            return self._forced_source
         if asset_type is not None and asset_type not in self.allowed_asset_types:
             raise ValueError(f"unsupported asset_type: {asset_type}")
         if asset_type and asset_type in self.source_by_asset:

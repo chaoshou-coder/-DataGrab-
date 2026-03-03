@@ -52,6 +52,23 @@ class StorageConfig:
 
 
 @dataclass
+class TickterialConfig:
+    cache_dir: str = ".tick-data"
+    max_retries: int = 6
+    retry_delay: float = 2.0
+    download_workers: int = 4
+    batch_size: int = 8
+    batch_pause_ms: int = 1000
+    retry_jitter_ms: int = 300
+    source_timestamp_shift_hours: float = 8.0
+    symbols: list[str] = field(default_factory=lambda: ["XAUUSD", "XAGUSD"])
+    price_basis: str = "last_or_price_or_mid"
+    ny_close_hour: int = 17
+    utcoffset: int = 0
+    force_utc_timezone: bool = True
+
+
+@dataclass
 class YFinanceConfig:
     proxy: str | None = None
     auto_adjust_default: str = "auto"
@@ -69,6 +86,7 @@ class AppConfig:
     filters: FilterConfig = field(default_factory=FilterConfig)
     download: DownloadConfig = field(default_factory=DownloadConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
+    tickterial: TickterialConfig = field(default_factory=TickterialConfig)
     yfinance: YFinanceConfig = field(default_factory=YFinanceConfig)
     baostock: BaostockConfig = field(default_factory=BaostockConfig)
     timezone: str = "Asia/Shanghai"

@@ -11,6 +11,7 @@ from ..config import (
     DownloadConfig,
     FilterConfig,
     StorageConfig,
+    TickterialConfig,
     YFinanceConfig,
     BaostockConfig,
 )
@@ -110,6 +111,74 @@ class StorageConfigModel(BaseModel):
         return str(value)
 
 
+class TickterialConfigModel(BaseModel):
+    cache_dir: str = ".tick-data"
+    max_retries: int = 6
+    retry_delay: float = 2.0
+    download_workers: int = 4
+    batch_size: int = 8
+    batch_pause_ms: int = 1000
+    retry_jitter_ms: int = 300
+    source_timestamp_shift_hours: float = 8.0
+    symbols: list[str] = Field(default_factory=lambda: ["XAUUSD", "XAGUSD"])
+    price_basis: str = "last_or_price_or_mid"
+    ny_close_hour: int = 17
+    utcoffset: int = 0
+    force_utc_timezone: bool = True
+
+    model_config = ConfigDict(extra="ignore")
+
+    @field_validator("symbols")
+    @classmethod
+    def _symbols(cls, value: list[str]) -> list[str]:
+        normalized = [item.strip().upper() for item in value if str(item).strip()]
+        if not normalized:
+            raise ValueError("tickterial.symbols cannot be empty")
+        return normalized
+
+    @field_validator("max_retries", "utcoffset")
+    @classmethod
+    def _non_negative_int(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("value must be >= 0")
+        return int(value)
+
+    @field_validator("ny_close_hour")
+    @classmethod
+    def _ny_close_hour(cls, value: int) -> int:
+        if not 0 <= value <= 23:
+            raise ValueError("ny_close_hour must be in [0, 23]")
+        return int(value)
+
+    @field_validator("download_workers", "batch_size")
+    @classmethod
+    def _positive_int(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("value must be >= 1")
+        return int(value)
+
+    @field_validator("batch_pause_ms", "retry_jitter_ms")
+    @classmethod
+    def _non_negative_int_ms(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("value must be >= 0")
+        return int(value)
+
+    @field_validator("source_timestamp_shift_hours", "retry_delay")
+    @classmethod
+    def _non_negative_float(cls, value: float) -> float:
+        if value < 0:
+            raise ValueError("value must be >= 0")
+        return float(value)
+
+    @field_validator("cache_dir")
+    @classmethod
+    def _cache_dir(cls, value: str) -> str:
+        if not value:
+            raise ValueError("tickterial.cache_dir is empty")
+        return str(value)
+
+
 class YFinanceConfigModel(BaseModel):
     proxy: str | None = None
     auto_adjust_default: str = "auto"
@@ -168,6 +237,7 @@ class AppConfigPayload(BaseModel):
     storage: StorageConfigModel = StorageConfigModel()
     yfinance: YFinanceConfigModel = YFinanceConfigModel()
     baostock: BaostockConfigModel = BaostockConfigModel()
+    tickterial: TickterialConfigModel = TickterialConfigModel()
     timezone: str = "Asia/Shanghai"
     intervals_default: list[str] = Field(default_factory=lambda: ["1d"])
     asset_types: list[str] = Field(
@@ -239,6 +309,7 @@ def build_config_model(validated: AppConfigPayload) -> AppConfig:
         storage=StorageConfig(
             **validated.storage.model_dump(),
         ),
+        tickterial=TickterialConfig(**validated.tickterial.model_dump()),
         yfinance=YFinanceConfig(**validated.yfinance.model_dump()),
         baostock=BaostockConfig(**validated.baostock.model_dump()),
         timezone=validated.timezone,

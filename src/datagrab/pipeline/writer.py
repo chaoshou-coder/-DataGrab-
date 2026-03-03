@@ -120,6 +120,7 @@ class ParquetWriter:
         new_df: pl.DataFrame,
         output_path: Path,
         adjustment: str | None,
+        extra_metadata: dict[str, str] | None = None,
     ) -> None:
         output_path = self._ensure_within_data_root(output_path)
         ensure_dir(output_path.parent)
@@ -171,9 +172,13 @@ class ParquetWriter:
             columns.append(ADJUSTED_COLUMN)
         df = df.select(columns)
         table = df.to_arrow()
+        metadata: dict[bytes, bytes] = dict(table.schema.metadata or {})
         if adjustment:
-            metadata = dict(table.schema.metadata or {})
             metadata[b"datagrab.adjustment"] = adjustment.encode("utf-8")
+        if extra_metadata:
+            for key, value in extra_metadata.items():
+                metadata[str(key).encode("utf-8")] = str(value).encode("utf-8")
+        if metadata:
             table = table.replace_schema_metadata(metadata)
         tmp = output_path.with_suffix(output_path.suffix + ".tmp")
         pq.write_table(table, tmp)
