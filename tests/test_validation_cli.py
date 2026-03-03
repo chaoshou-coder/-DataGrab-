@@ -10,6 +10,8 @@ def _ns(**overrides):
         command="download",
         log_level="INFO",
         asset_type="stock",
+        source="auto",
+        format="jsonl",
         symbols=None,
         symbol=None,
         intervals="1d",
@@ -49,3 +51,8 @@ def test_start_after_end_rejected():
 def test_non_ashare_adjust_only_auto_none():
     with pytest.raises(CliValidationError):
         validate_cli_args(_ns(asset_type="stock", adjust="back"), asset_types=["stock", "ashare"])
+
+
+def test_cli_args_exposes_source_field():
+    model = validate_cli_args(_ns(source="tickterial"), asset_types=["stock", "ashare"])
+    assert model.source == "tickterial"

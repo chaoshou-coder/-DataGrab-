@@ -68,6 +68,8 @@ class CliArgsModel(BaseModel):
     workers: int | None = Field(default=None, ge=1, le=256)
     verbose: bool = False
     adjust: str | None = None
+    source: str | None = None
+    format: str | None = None
     download_log_file: str | None = None
     intervals: list[str] = Field(default_factory=list)
     symbols: list[str] = Field(default_factory=list)
@@ -109,6 +111,22 @@ class CliArgsModel(BaseModel):
         if normalized not in ADJUST_MODES:
             raise ValueError(f"unsupported adjust: {value}")
         return normalized
+
+    @field_validator("source")
+    @classmethod
+    def _source(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip().lower()
+        return normalized or None
+
+    @field_validator("format")
+    @classmethod
+    def _format(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip().lower()
+        return normalized or None
 
     @field_validator("symbols", mode="before")
     @classmethod

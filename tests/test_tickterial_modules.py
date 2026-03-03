@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from argparse import Namespace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -215,6 +216,62 @@ def test_runner_failed_window_dataclass() -> None:
     assert fw.start == datetime(2024, 1, 1)
     assert fw.end == datetime(2025, 1, 1)
     assert fw.reason == "test error"
+
+
+def test_runner_run_writes_expected_columns_without_keyerror(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from datagrab.tickterial import runner
+
+    monkeypatch.setattr(runner, "Tickloader", object())
+    monkeypatch.setattr(runner, "configure_logging", lambda *_args, **_kwargs: None)
+
+    ticks = pd.DataFrame(
+        {
+            "datetime": [datetime(2024, 1, 1, 0, 0), datetime(2024, 1, 1, 0, 1)],
+            "price": [1.0, 1.1],
+            "volume": [10.0, 20.0],
+        }
+    )
+    bars_1m = pd.DataFrame(
+        {
+            "datetime": pd.date_range("2024-01-01T00:00:00", periods=2, freq="1min"),
+            "open": [1.0, 1.1],
+            "high": [1.1, 1.2],
+            "low": [0.9, 1.0],
+            "close": [1.05, 1.15],
+            "volume": [10.0, 20.0],
+            "extra": [1, 2],
+        }
+    )
+    monkeypatch.setattr(runner, "fetch_ticks", lambda *_args, **_kwargs: ticks)
+    monkeypatch.setattr(runner, "build_1m_bars", lambda *_args, **_kwargs: bars_1m)
+
+    args = Namespace(
+        symbols="XAGUSD",
+        start="2024-01-01T00:00:00",
+        end="2024-01-01T00:02:00",
+        output=str(tmp_path),
+        cache_dir=str(tmp_path / ".tick-data"),
+        intervals="1m",
+        max_retries=0,
+        retry_delay=0.1,
+        download_workers=1,
+        batch_size=1,
+        batch_pause_ms=0,
+        retry_jitter_ms=0,
+        source_timestamp_shift_hours=0.0,
+        resume_failures="",
+        validate=False,
+        strict_validate=False,
+        window_retries=0,
+        log_level="ERROR",
+        suppress_tickloader_info=True,
+        force=True,
+    )
+    assert runner.run(args) == 0
+    output_files = list(tmp_path.glob("XAGUSD_1m_*.csv"))
+    assert len(output_files) == 1
+    written = pd.read_csv(output_files[0])
+    assert list(written.columns) == ["datetime", "open", "high", "low", "close", "volume"]
 
 
 def test_bridge_parse_window_valid(tmp_path: Path) -> None:

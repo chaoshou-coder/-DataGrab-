@@ -325,7 +325,8 @@ def run(args: argparse.Namespace | None = None) -> int:
 
                     for interval, df in to_write.items():
                         if interval in outputs:
-                            write_csv(outputs[interval], df[EXPECTED_COLUMNS])
+                            # pandas 将 tuple 视作单列键；这里需要显式按多列切片。
+                            write_csv(outputs[interval], df.loc[:, list(EXPECTED_COLUMNS)])
 
                     completed = True
                     break
