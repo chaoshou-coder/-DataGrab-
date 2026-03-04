@@ -35,6 +35,9 @@ dependencies = [
   "tickterial>=1.1.2",
 ]
 
+[project.optional-dependencies]
+tickvault = ["tick-vault>=0.1"]
+
 [project.urls]
 Homepage = "https://github.com/chaoshou-coder/-DataGrab-"
 Repository = "https://github.com/chaoshou-coder/-DataGrab-"

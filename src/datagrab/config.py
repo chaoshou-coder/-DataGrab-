@@ -53,10 +53,13 @@ class StorageConfig:
 
 @dataclass
 class TickterialConfig:
+    backend: str = "auto"
     cache_dir: str = ".tick-data"
+    tickvault_base_dir: str = ".tick-data/tick_vault_data"
+    tickvault_workers: int = 10
     max_retries: int = 6
     retry_delay: float = 2.0
-    download_workers: int = 4
+    download_workers: int = 10
     batch_size: int = 8
     batch_pause_ms: int = 1000
     retry_jitter_ms: int = 300

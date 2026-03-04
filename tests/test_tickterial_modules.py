@@ -11,6 +11,8 @@ from datagrab.sources.tickterial_source import TickterialDataSource
 from datagrab.config import AppConfig
 from datagrab.tickterial import check as checker
 from datagrab.tickterial.common import build_daily_bars_ny_close, parse_intervals
+from datagrab.tickterial import runner
+from datagrab.tickterial.exceptions import FetchError
 
 
 def test_parse_intervals_normalizes_and_validates() -> None:
@@ -292,6 +294,177 @@ def test_bridge_parse_window_invalid(tmp_path: Path) -> None:
     f = tmp_path / "badname.csv"
     f.touch()
     assert parse_window(f) is None
+
+
+def test_backend_selection_prefers_tickvault_on_auto(monkeypatch: pytest.MonkeyPatch) -> None:
+    args = Namespace(
+        backend="auto",
+        cache_dir=".",
+        tickvault_workers=5,
+        tickvault_base_dir="",
+        download_workers=3,
+    )
+    called = {"legacy": 0, "tickvault": 0}
+
+    def fake_tickvault_fetch_ticks(*_args, **_kwargs):
+        called["tickvault"] += 1
+        return pd.DataFrame(
+            {
+                "datetime": [datetime(2024, 1, 1, 0, 0), datetime(2024, 1, 1, 0, 1)],
+                "price": [1.0, 1.1],
+                "volume": [10.0, 20.0],
+            }
+        )
+
+    def fake_legacy_fetch_ticks(*_args, **_kwargs):
+        called["legacy"] += 1
+        return pd.DataFrame(
+            {
+                "datetime": [datetime(2024, 1, 1, 0, 0), datetime(2024, 1, 1, 0, 1)],
+                "price": [1.0, 1.1],
+                "volume": [10.0, 20.0],
+            }
+        )
+
+    monkeypatch.setattr(runner.fetch_tickvault, "TICKVAULT_AVAILABLE", True)
+    monkeypatch.setattr(runner.fetch_tickvault, "fetch_ticks", fake_tickvault_fetch_ticks)
+    monkeypatch.setattr(runner, "fetch_ticks", fake_legacy_fetch_ticks)
+
+    df = runner._load_ticks_for_window(
+        symbol="XAUUSD",
+        win_start=datetime(2024, 1, 1),
+        win_end=datetime(2024, 1, 1, 0, 2),
+        args=args,
+        max_retries=1,
+        retry_delay=0.1,
+        batch_size=1,
+        batch_pause_ms=0,
+        retry_jitter_ms=0,
+        cache_dir=".",
+        source_timestamp_shift_hours=0.0,
+    )
+    assert called["tickvault"] == 1
+    assert called["legacy"] == 0
+    assert list(df.columns) == ["datetime", "price", "volume"]
+
+
+def test_backend_selection_prefers_tickterial_when_forced(monkeypatch: pytest.MonkeyPatch) -> None:
+    args = Namespace(
+        backend="tickterial",
+        cache_dir=".",
+        tickvault_workers=5,
+        tickvault_base_dir="",
+        download_workers=3,
+    )
+    called = {"legacy": 0, "tickvault": 0}
+
+    def fake_tickvault_fetch_ticks(*_args, **_kwargs):
+        called["tickvault"] += 1
+        return pd.DataFrame({"datetime": [], "price": [], "volume": []})
+
+    def fake_legacy_fetch_ticks(*_args, **_kwargs):
+        called["legacy"] += 1
+        return pd.DataFrame(
+            {
+                "datetime": [datetime(2024, 1, 1, 0, 0), datetime(2024, 1, 1, 0, 1)],
+                "price": [1.0, 1.1],
+                "volume": [10.0, 20.0],
+            }
+        )
+
+    monkeypatch.setattr(runner.fetch_tickvault, "TICKVAULT_AVAILABLE", True)
+    monkeypatch.setattr(runner.fetch_tickvault, "fetch_ticks", fake_tickvault_fetch_ticks)
+    monkeypatch.setattr(runner, "fetch_ticks", fake_legacy_fetch_ticks)
+
+    df = runner._load_ticks_for_window(
+        symbol="XAUUSD",
+        win_start=datetime(2024, 1, 1),
+        win_end=datetime(2024, 1, 1, 0, 2),
+        args=args,
+        max_retries=1,
+        retry_delay=0.1,
+        batch_size=1,
+        batch_pause_ms=0,
+        retry_jitter_ms=0,
+        cache_dir=".",
+        source_timestamp_shift_hours=0.0,
+    )
+    assert called["legacy"] == 1
+    assert called["tickvault"] == 0
+    assert list(df.columns) == ["datetime", "price", "volume"]
+
+
+def test_backend_selection_auto_falls_back_to_tickterial(monkeypatch: pytest.MonkeyPatch) -> None:
+    args = Namespace(
+        backend="auto",
+        cache_dir=".",
+        tickvault_workers=5,
+        tickvault_base_dir="",
+        download_workers=3,
+    )
+    called = {"legacy": 0, "tickvault": 0}
+
+    def fake_legacy_fetch_ticks(*_args, **_kwargs):
+        called["legacy"] += 1
+        return pd.DataFrame(
+            {
+                "datetime": [datetime(2024, 1, 1, 0, 0), datetime(2024, 1, 1, 0, 1)],
+                "price": [1.0, 1.1],
+                "volume": [10.0, 20.0],
+            }
+        )
+
+    def fake_tickvault_fetch_ticks(*_args, **_kwargs):
+        called["tickvault"] += 1
+        raise FetchError("tick-vault disabled")
+
+    monkeypatch.setattr(runner.fetch_tickvault, "TICKVAULT_AVAILABLE", True)
+    monkeypatch.setattr(runner.fetch_tickvault, "fetch_ticks", fake_tickvault_fetch_ticks)
+    monkeypatch.setattr(runner, "fetch_ticks", fake_legacy_fetch_ticks)
+
+    df = runner._load_ticks_for_window(
+        symbol="XAUUSD",
+        win_start=datetime(2024, 1, 1),
+        win_end=datetime(2024, 1, 1, 0, 2),
+        args=args,
+        max_retries=1,
+        retry_delay=0.1,
+        batch_size=1,
+        batch_pause_ms=0,
+        retry_jitter_ms=0,
+        cache_dir=".",
+        source_timestamp_shift_hours=0.0,
+    )
+    assert called["legacy"] == 1
+    assert called["tickvault"] == 1
+    assert list(df.columns) == ["datetime", "price", "volume"]
+
+
+def test_backend_selection_tickvault_forced_raises_without_dependency(monkeypatch: pytest.MonkeyPatch) -> None:
+    args = Namespace(
+        backend="tickvault",
+        cache_dir=".",
+        tickvault_workers=5,
+        tickvault_base_dir="",
+        download_workers=3,
+    )
+
+    monkeypatch.setattr(runner.fetch_tickvault, "TICKVAULT_AVAILABLE", False)
+
+    with pytest.raises(FetchError):
+        runner._load_ticks_for_window(
+            symbol="XAUUSD",
+            win_start=datetime(2024, 1, 1),
+            win_end=datetime(2024, 1, 1, 0, 2),
+            args=args,
+            max_retries=1,
+            retry_delay=0.1,
+            batch_size=1,
+            batch_pause_ms=0,
+            retry_jitter_ms=0,
+            cache_dir=".",
+            source_timestamp_shift_hours=0.0,
+        )
 
 
 def test_repair_expected_rows() -> None:

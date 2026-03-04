@@ -3,8 +3,8 @@
 ## 技术选型
 
 - **语言与运行时**：Python 3.11+。
-- **数据处理策略**：主链路统一基于 `Polars` 与 `PyArrow` 处理 Parquet；`tickterial` 链路内部使用 `pandas` 进行 tick 聚合与校验前处理。
-- **并发与限速**：线程池并发下载 + `RateLimiter`（请求/秒 + 随机抖动 + 429 指数退避）。
+- **数据处理策略**：主链路统一基于 `Polars` 与 `PyArrow` 处理 Parquet；`tickterial` 链路内部使用 `pandas` 进行 tick 聚合与校验前处理，底层下载支持 `tickterial` 与 `tick-vault` 双后端，默认优先尝试 `tick-vault`。
+- **并发与限速**：非 tickterial 源使用 `RateLimiter`（请求/秒 + 随机抖动 + 429 指数退避）；tickterial 源支持 `tickterial` 与 `tick-vault` 双后端，后者支持异步并发下载。
 - **CLI 与配置**：`argparse` + `pydantic`，通过统一模型完成参数与配置校验。
 - **数据质量**：下载与验数分别形成 `QualityIssue`，支持 ERROR/WARN 分级与导出。
 - **配置来源**：YAML/TOML 文件、环境变量覆盖。
@@ -34,10 +34,13 @@
 
 | 字段 | 默认值 | 说明 |
 |---|---:|---|
+| `backend` | `auto` | `auto`/`tickterial`/`tickvault` |
 | `cache_dir` | `.tick-data` | tickterial 原始缓存目录 |
+| `tickvault_base_dir` | `.tick-data/tick_vault_data` | tick-vault 元数据与缓存目录 |
+| `tickvault_workers` | `10` | tick-vault 下载并发 |
 | `max_retries` | `6` | 单小时窗口最大重试次数 |
 | `retry_delay` | `2.0` | 重试基准秒数 |
-| `download_workers` | `4` | 并发 worker 数 |
+| `download_workers` | `10` | `tickterial` 后端并发 worker 数 |
 | `batch_size` | `8` | 每批小时窗口数量 |
 | `batch_pause_ms` | `1000` | 批次间隔（毫秒） |
 | `retry_jitter_ms` | `300` | 重试/批次休眠抖动（毫秒） |
@@ -153,6 +156,7 @@
 - `ruff`
 - `mypy`
 - `tickterial>=1.1.2`
+- `tick-vault`（可选，`pip install .[tickvault]` 安装）
 
 开发校验建议：
 

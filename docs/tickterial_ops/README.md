@@ -37,11 +37,10 @@
   - `{symbol}_1d_YYYYMMDD_YYYYMMDD.csv`
 - 失败日志：`<tickterial_output>/failures_mvp.csv`
 
-报告导出（可选）：
+结果导出（可选）：
 
-- `--report-json`
-- `--report-csv`
-- `--repair-command-file`
+- 可使用 `--out` 与 `--format` 导出问题列表；
+- 结合 `--out` 与 `--format`，避免外部脚本作为主流程。
 
 ## 3) 推荐执行流程
 
@@ -81,13 +80,13 @@ datagrab bridge --input-dir ./data/tickterial_csv --output-root ./data --asset-t
 ### A. tickterial 下载（示例）
 
 ```bash
-datagrab download --source tickterial --symbols XAUUSD --tickterial-output ./data/tickterial_csv --start 2016-01-01 --end 2016-01-02 --intervals 1m,5m,15m,1d --tickterial-workers 4
+datagrab download --source tickterial --tickterial-backend tickvault --symbols XAUUSD --tickterial-output ./data/tickterial_csv --start 2016-01-01 --end 2016-01-02 --intervals 1m,5m,15m,1d --tickterial-tickvault-workers 10
 ```
 
 ### B. tickterial CSV 校验
 
 ```bash
-datagrab validate --format csv --tickterial-output ./data/tickterial_csv --symbol XAUUSD --start 2016-01-01 --end 2016-01-02 --interval 1m
+datagrab validate --format csv --tickterial-output ./data/tickterial_csv --symbol XAUUSD --start 2016-01-01 --end 2016-01-02 --interval 1m --out ./xau_tickterial_validate.jsonl --format jsonl
 ```
 
 ### C. tickterial 修复 + 重检

@@ -21,7 +21,12 @@ from .sources.baostock_source import BaostockDataSource
 from .sources.router import SourceRouter
 from .sources.yfinance_source import YFinanceDataSource
 from .sources.tickterial_source import TickterialDataSource
-from .storage.export import export_backtrader_csv, export_vectorbt_npz
+from .storage.export import (
+    export_backtrader_csv,
+    export_mt4_batch,
+    export_mt4_csv,
+    export_vectorbt_npz,
+)
 from .storage.quality import Severity
 from .storage.validate import BatchProgress, iter_parquet_files, validate_batch
 from .timeutils import DateRange, default_date_range, parse_date, set_timezone
@@ -122,6 +127,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     dl_parser.add_argument("--tickterial-cache-dir", default="", help="tickterial 缓存目录（默认: 配置中的 cache_dir）")
     dl_parser.add_argument("--tickterial-workers", type=int, default=None, help="tickterial 下载并发 worker 数")
+    dl_parser.add_argument("--tickterial-backend", type=str, default="", help="tickterial 下载后端: auto|tickterial|tickvault")
+    dl_parser.add_argument("--tickterial-tickvault-workers", type=int, default=None, help="tick-vault 下载并发 worker 数")
+    dl_parser.add_argument("--tickterial-tickvault-base-dir", type=str, default="", help="tick-vault 缓存目录（默认: cache_dir/tick_vault_data）")
     dl_parser.add_argument("--tickterial-max-retries", type=int, default=None, help="tickterial 每小时下载重试次数")
     dl_parser.add_argument("--tickterial-retry-delay", type=float, default=None, help="tickterial 基础重试间隔秒")
     dl_parser.add_argument("--tickterial-batch-size", type=int, default=None, help="tickterial 下载批次大小")
@@ -156,9 +164,11 @@ def build_parser() -> argparse.ArgumentParser:
     doctor_parser.add_argument("--interval", type=str, help="for scope check, interval token")
 
     export_parser = subparsers.add_parser("export", help="export data for engines")
-    export_parser.add_argument("--engine", choices=["vectorbt", "backtrader"], required=True)
+    export_parser.add_argument("--engine", choices=["vectorbt", "backtrader", "mt4"], required=True)
     export_parser.add_argument("--input", required=True)
     export_parser.add_argument("--output", required=True)
+    export_parser.add_argument("--symbol", default="", help="mt4 batch export symbol filter")
+    export_parser.add_argument("--interval", default="", help="mt4 batch export interval filter")
 
     validate_parser = subparsers.add_parser("validate", help="validate parquet data quality under data_root")
     validate_parser.add_argument("path", nargs="?", help="可选：直接指定待校验目录（例如 E:\\data\\DateGrab\\commodity）")
@@ -1233,12 +1243,27 @@ def _run_download_tickterial(
     retry_delay = (
         getattr(cli_args, "tickterial_retry_delay", None)
         if getattr(cli_args, "tickterial_retry_delay", None) is not None
-        else 1.5
+        else config.tickterial.retry_delay
     )
+    backend = (
+        getattr(cli_args, "tickterial_backend", "")
+        if getattr(cli_args, "tickterial_backend", None) is not None
+        else config.tickterial.backend
+    )
+    backend = (backend or config.tickterial.backend).strip().lower()
     download_workers = (
         getattr(cli_args, "tickterial_workers", None)
         if getattr(cli_args, "tickterial_workers", None) is not None
-        else 4
+        else config.tickterial.download_workers
+    )
+    tickterial_tickvault_workers = (
+        getattr(cli_args, "tickterial_tickvault_workers", None)
+        if getattr(cli_args, "tickterial_tickvault_workers", None) is not None
+        else config.tickterial.tickvault_workers
+    )
+    tickterial_tickvault_base_dir = (
+        getattr(cli_args, "tickterial_tickvault_base_dir", "").strip()
+        or config.tickterial.tickvault_base_dir
     )
     batch_size = (
         getattr(cli_args, "tickterial_batch_size", None)
@@ -1269,6 +1294,9 @@ def _run_download_tickterial(
         end=date_range.end.isoformat(),
         output=str(output_dir),
         cache_dir=str(cache_dir),
+        backend=backend,
+        tickvault_workers=tickterial_tickvault_workers,
+        tickvault_base_dir=tickterial_tickvault_base_dir,
         intervals=",".join(intervals) if intervals else "1m,5m,15m,1d",
         max_retries=max_retries,
         retry_delay=retry_delay,
@@ -2007,8 +2035,36 @@ def main(argv: list[str] | None = None) -> None:
         output_path = Path(args.output)
         if args.engine == "vectorbt":
             export_vectorbt_npz(input_path, output_path)
-        else:
+        elif args.engine == "backtrader":
             export_backtrader_csv(input_path, output_path)
+        else:
+            if input_path.is_dir():
+                if output_path.suffix:
+                    raise RuntimeError("mt4 batch export: --output must be a directory")
+                symbol_filter = (args.symbol or "").strip().upper() or None
+                interval_filter = (args.interval or "").strip() or None
+                outputs = export_mt4_batch(
+                    input_dir=input_path,
+                    output_dir=output_path,
+                    symbol_filter=symbol_filter,
+                    interval_filter=interval_filter,
+                )
+                logger.info("exported mt4 files: %s", ", ".join(str(item) for item in outputs))
+                return
+            if output_path.suffix.lower() != ".csv":
+                raise RuntimeError("mt4 single export: --output must be a .csv file path")
+            if output_path.exists() and output_path.is_dir():
+                raise RuntimeError("mt4 single export: --output must be a file path")
+            if input_path.suffix.lower() in {".pq", ".parquet"}:
+                import polars as pl
+
+                export_mt4_csv(pl.read_parquet(input_path), output_path)
+            elif input_path.suffix.lower() == ".csv":
+                import polars as pl
+
+                export_mt4_csv(pl.read_csv(input_path), output_path)
+            else:
+                raise ValueError(f"unsupported mt4 input format: {input_path.suffix}")
         logger.info("exported %s to %s", args.engine, output_path)
         return
 

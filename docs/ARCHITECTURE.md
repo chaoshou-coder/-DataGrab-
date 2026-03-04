@@ -56,6 +56,7 @@
 | `datagrab.sources.router` | 按资产类型/来源路由到具体实现 |
 | `datagrab.tickterial.download` | 向后兼容转发层：保留旧导入路径，真实逻辑位于 `fetch` / `aggregate` / `runner` |
 | `datagrab.tickterial.fetch` | 并发小时级 tick 拉取、重试与限流 |
+| `datagrab.tickterial.fetch_tickvault` | `tick-vault` 后端适配器，异步下载与时间戳归一化 |
 | `datagrab.tickterial.aggregate` | tick 聚合到 1m/5m/15m/1d，完整性校验 |
 | `datagrab.tickterial.runner` | tickterial CLI 编排、CSV I/O、失败窗口与日志 |
 | `datagrab.tickterial.check` | tickterial CSV 校验、告警报告 |

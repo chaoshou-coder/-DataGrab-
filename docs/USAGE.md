@@ -70,14 +70,32 @@ datagrab download --asset-type stock --symbols AAPL,MSFT --intervals 1d --start 
 #### 2.2 tickterial 下载（CSV 主输出）
 
 ```bash
-datagrab download --source tickterial --symbols XAUUSD --intervals 1m,5m,15m,1d --start 2016-01-01 --end 2016-01-02
+datagrab download --source tickterial --tickterial-backend tickvault --symbols XAUUSD --intervals 1m,5m,15m,1d --start 2016-01-01 --end 2016-01-02
 ```
 
 - 该路径默认产出到 `<data-root>/tickterial_csv`（可用 `--tickterial-output` 覆盖）；
-- 常用参数：`--tickterial-workers`、`--tickterial-batch-size`、`--tickterial-batch-pause-ms`、`--tickterial-retry-jitter-ms`；
+- 常用参数：`--tickterial-backend`（`tickterial`/`tickvault`/`auto`）、`--tickterial-workers`、`--tickterial-batch-size`、`--tickterial-batch-pause-ms`、`--tickterial-retry-jitter-ms`；
+- 默认后端采用 `tickvault`（若未安装则自动退回 `tickterial`）；
+- `tickvault` 可通过 `--tickterial-tickvault-workers`、`--tickterial-tickvault-base-dir` 调整性能与磁盘目录。
 - 建议先配合 `--tickterial-validate` 进行下游一致性校验。
 
-### 2.3 失败与重跑
+#### 2.3 MT4 导出（History Center 导入）
+
+```bash
+datagrab export --engine mt4 --input ./data/tickterial_csv --output ./mt4_csv --symbol XAGUSD --interval 1m
+```
+
+- 输入是 tickterial CSV 目录时，按 `symbol/interval` 分组并合并，输出到目标目录：
+  - `XAGUSD_M1.csv`, `XAGUSD_M5.csv`, `XAGUSD_M15.csv`, `XAGUSD_D1.csv`。
+- 单文件转换也支持，例如：
+
+```bash
+datagrab export --engine mt4 --input ./data/tickterial_csv/XAGUSD_1m_20240101_20240131.csv --output ./mt4_csv/XAGUSD_1m.csv
+```
+
+- 输出格式符合 MT4 History Center 要求：`Date,Time,Open,High,Low,Close,Volume`（无表头），时间格式 `YYYY.MM.DD,HH:MM`。
+
+### 2.4 失败与重跑
 
 - `--only-failures`：按 `failures.csv` 仅重跑失败窗口；
 - `--failures-file`：自定义 failures 文件路径；
@@ -150,13 +168,14 @@ datagrab bridge --input-dir ./data/tickterial_csv --output-root ./data --asset-t
 | `datagrab catalog --asset-type <类型> [--refresh] [--limit N]` | 拉取并缓存 symbol；不加 `--refresh` 先读缓存 |
 | `datagrab catalog --refresh --refresh-all` | 同时刷新美股 + A 股 |
 | `datagrab download --asset-type <类型> --symbols A,B [--intervals 1d/5m/15m] [--start <YYYY-MM-DD>] [--end <YYYY-MM-DD>] [--adjust auto\|back\|front\|backward\|none] [--only-failures] [--failures-file <path>] [--strict-failures-csv] [--verbose] [--download-log-file <path>]` | 按参数批量抓取 |
-| `datagrab download --source tickterial --symbols <symbol> [--tickterial-output <path>] [--tickterial-workers N] [--tickterial-batch-size N] [--tickterial-batch-pause-ms N] [--tickterial-retry-jitter-ms N] [--tickterial-strict-validate]` | Dukascopy 走并发抓取，默认产出 CSV |
+| `datagrab download --source tickterial --symbols <symbol> [--tickterial-backend auto\|tickterial\|tickvault] [--tickterial-output <path>] [--tickterial-tickvault-workers N] [--tickterial-tickvault-base-dir <path>] [--tickterial-workers N] [--tickterial-batch-size N] [--tickterial-batch-pause-ms N] [--tickterial-retry-jitter-ms N] [--tickterial-strict-validate]` | Dukascopy 走并发抓取，默认先尝试 tick-vault 后端 |
 | `datagrab validate --format csv [--tickterial-output <path>] [--symbol <sym>] [--interval <itv>] [--start <YYYY-MM-DD>] [--end <YYYY-MM-DD>]` | 扫描 tickterial CSV 并输出质量报告 |
 | `datagrab repair --symbol <sym> --start <YYYY-MM-DD> --end <YYYY-MM-DD> [--intervals <itv,...>]` | 重建 tickterial CSV（支持 dry-run/strict） |
 | `datagrab bridge --input-dir <path> [--output-root <path>] [--asset-type <类型>] [--symbol <sym>] [--interval <itv>]` | 批量将 tickterial CSV 转为 Parquet |
 | `datagrab doctor [--json] [--strict] [--check-scope] [--asset-type <类型>] [--symbol AAPL] [--interval 1d]` | 健康检查 |
 | `datagrab check-deps [--auto-install]` | 依赖检查 |
 | `datagrab export --engine vectorbt\|backtrader --input <parquet> --output <path>` | 导出为 vectorbt/backtrader 输入 |
+| `datagrab export --engine mt4 --input <tickterial_csv_dir_or_file> --output <dir_or_file>` | 导出为 MT4 History Center CSV（无表头） |
 | `datagrab validate [path] [--root <path>] [--asset-type <类型>] [--symbol <sym>] [--interval <itv>] [--out <path>] [--format jsonl\|csv] [--summary] [--workers N]` | 扫描 parquet 质量；`path` 与 `--root` 语义见下文 |
 
 ### 全局与目录筛选参数（catalog / download / validate 通用）

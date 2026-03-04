@@ -31,6 +31,7 @@ from .common import (
 )
 from .exceptions import AggregationError, FetchError
 from .fetch import Tickloader, fetch_ticks
+from . import fetch_tickvault
 
 UTC = timezone.utc
 logger = logging.getLogger(__name__)
@@ -56,7 +57,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--intervals", default="1m,5m,15m,1d", help="output intervals, default 1m,5m,15m,1d")
     parser.add_argument("--max-retries", type=int, default=6, help="retry times per hourly tick call")
     parser.add_argument("--retry-delay", type=float, default=1.5, help="base delay seconds between retries")
-    parser.add_argument("--download-workers", type=int, default=4, help="max concurrent hourly tick workers")
+    parser.add_argument("--download-workers", type=int, default=10, help="max concurrent hourly tick workers")
+    parser.add_argument("--backend", default="auto", help="tickterial 后端: auto|tickterial|tickvault")
+    parser.add_argument("--tickvault-workers", type=int, default=None, help="tick-vault 并发 worker 数（默认使用 tickterial_workers）")
+    parser.add_argument("--tickvault-base-dir", default="", help="tick-vault 缓存目录")
     parser.add_argument("--batch-size", type=int, default=8, help="hourly tasks per batch")
     parser.add_argument("--batch-pause-ms", type=int, default=1000, help="pause milliseconds between batches")
     parser.add_argument("--retry-jitter-ms", type=int, default=300, help="jitter milliseconds added to retry and batch sleeps")
@@ -111,6 +115,108 @@ def read_failed_windows(path: str) -> set[tuple[str, str]]:
 def iter_year_windows(start: datetime, end: datetime) -> list[tuple[datetime, datetime]]:
     """Split a date range into per-year windows."""
     return common_iter_year_windows(start, end)
+
+
+def _resolve_backend_args(
+    args: argparse.Namespace,
+    *,
+    symbol: str,
+    win_start: datetime,
+    win_end: datetime,
+) -> tuple[str, int]:
+    selected_backend = getattr(args, "backend", "auto")
+    if isinstance(selected_backend, str):
+        selected_backend = selected_backend.strip().lower()
+    if selected_backend not in {"auto", "tickterial", "tickvault"}:
+        logger.warning("unsupported backend=%s, fallback to auto", selected_backend)
+        selected_backend = "auto"
+
+    if selected_backend == "auto":
+        if fetch_tickvault.TICKVAULT_AVAILABLE:
+            selected_backend = "tickvault"
+        else:
+            selected_backend = "tickterial"
+
+    if selected_backend == "tickvault":
+        base_dir = (getattr(args, "tickvault_base_dir", "") or "").strip()
+        if not base_dir:
+            base_dir = str(Path(args.cache_dir).resolve() / "tick_vault_data")
+        workers = getattr(args, "tickvault_workers", None)
+        if workers is None:
+            workers = args.download_workers
+        return "tickvault", max(1, int(workers))
+
+    if selected_backend != "tickterial":
+        selected_backend = "tickterial"
+    logger.debug(
+        "backend resolved: %s symbol=%s window=%s->%s",
+        selected_backend,
+        symbol,
+        win_start.isoformat(),
+        win_end.isoformat(),
+    )
+    return "tickterial", args.download_workers
+
+
+def _load_ticks_for_window(
+    *,
+    symbol: str,
+    win_start: datetime,
+    win_end: datetime,
+    args: argparse.Namespace,
+    max_retries: int,
+    retry_delay: float,
+    batch_size: int,
+    batch_pause_ms: int,
+    retry_jitter_ms: int,
+    cache_dir: str,
+    source_timestamp_shift_hours: float,
+) -> pd.DataFrame:
+    backend, workers = _resolve_backend_args(args, symbol=symbol, win_start=win_start, win_end=win_end)
+    if backend == "tickvault":
+        logger.info("tick-vault backend: %s [%s->%s]", symbol, win_start.isoformat(), win_end.isoformat())
+        return fetch_tickvault.fetch_ticks(
+            symbol,
+            win_start,
+            win_end,
+            base_dir=str(getattr(args, "tickvault_base_dir", "") or str(Path(args.cache_dir).resolve() / "tick_vault_data")),
+            workers=workers,
+        )
+    try:
+        return fetch_ticks(
+            symbol,
+            win_start,
+            win_end,
+            max_retries,
+            retry_delay,
+            args.download_workers,
+            batch_size,
+            batch_pause_ms,
+            retry_jitter_ms,
+            cache_dir,
+            source_timestamp_shift_hours,
+        )
+    except FetchError as exc:
+        if getattr(args, "backend", "auto") == "tickvault":
+            raise
+        if getattr(args, "backend", "auto") == "auto":
+            logger.warning("tick-vault failover failed, fallback to tickterial: %s", exc)
+            return fetch_ticks(
+                symbol,
+                win_start,
+                win_end,
+                max_retries,
+                retry_delay,
+                args.download_workers,
+                batch_size,
+                batch_pause_ms,
+                retry_jitter_ms,
+                cache_dir,
+                source_timestamp_shift_hours,
+            )
+        raise
+
+    raise RuntimeError("unreachable")
 
 
 def _with_atomic_write(path: Path, rows: list[dict[str, str]], fieldnames: list[str]) -> None:
@@ -196,6 +302,12 @@ def run(args: argparse.Namespace | None = None) -> int:
         return 2
 
     args = args or parse_args()
+    backend = (getattr(args, "backend", "auto") or "auto").strip().lower()
+    if backend not in {"auto", "tickterial", "tickvault"}:
+        logger.error("unsupported backend=%s, using auto", backend)
+        backend = "auto"
+    setattr(args, "backend", backend)
+
     symbols = parse_symbols(args.symbols)
     intervals = parse_intervals(args.intervals)
     start = parse_dt(args.start)
@@ -211,6 +323,9 @@ def run(args: argparse.Namespace | None = None) -> int:
         return 2
     if args.batch_pause_ms < 0:
         logger.error("--batch-pause-ms must be >= 0")
+        return 2
+    if getattr(args, "tickvault_workers", None) is not None and args.tickvault_workers < 1:
+        logger.error("--tickvault-workers must be >= 1")
         return 2
     if args.max_retries < 0:
         logger.error("--max-retries must be >= 0")
@@ -254,18 +369,18 @@ def run(args: argparse.Namespace | None = None) -> int:
                     if window_attempts > 1:
                         logger.info("window attempt %d/%d: %s %s", attempt, window_attempts, symbol, window_tag)
 
-                    ticks = fetch_ticks(
-                        symbol,
-                        win_start,
-                        win_end,
-                        args.max_retries,
-                        args.retry_delay,
-                        args.download_workers,
-                        args.batch_size,
-                        args.batch_pause_ms,
-                        args.retry_jitter_ms,
-                        args.cache_dir,
-                        args.source_timestamp_shift_hours,
+                    ticks = _load_ticks_for_window(
+                        symbol=symbol,
+                        win_start=win_start,
+                        win_end=win_end,
+                        args=args,
+                        max_retries=args.max_retries,
+                        retry_delay=args.retry_delay,
+                        batch_size=args.batch_size,
+                        batch_pause_ms=args.batch_pause_ms,
+                        retry_jitter_ms=args.retry_jitter_ms,
+                        cache_dir=str(args.cache_dir),
+                        source_timestamp_shift_hours=args.source_timestamp_shift_hours,
                     )
                     if ticks.empty:
                         logger.warning("%s %s: no ticks in window", symbol, window_tag)

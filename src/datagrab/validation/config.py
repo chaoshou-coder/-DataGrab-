@@ -112,10 +112,13 @@ class StorageConfigModel(BaseModel):
 
 
 class TickterialConfigModel(BaseModel):
+    backend: str = "auto"
     cache_dir: str = ".tick-data"
+    tickvault_base_dir: str = ".tick-data/tick_vault_data"
+    tickvault_workers: int = 10
     max_retries: int = 6
     retry_delay: float = 2.0
-    download_workers: int = 4
+    download_workers: int = 10
     batch_size: int = 8
     batch_pause_ms: int = 1000
     retry_jitter_ms: int = 300
@@ -127,6 +130,14 @@ class TickterialConfigModel(BaseModel):
     force_utc_timezone: bool = True
 
     model_config = ConfigDict(extra="ignore")
+
+    @field_validator("backend")
+    @classmethod
+    def _backend(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in {"auto", "tickterial", "tickvault"}:
+            raise ValueError("tickterial.backend must be one of: auto, tickterial, tickvault")
+        return normalized
 
     @field_validator("symbols")
     @classmethod
@@ -157,12 +168,26 @@ class TickterialConfigModel(BaseModel):
             raise ValueError("value must be >= 1")
         return int(value)
 
+    @field_validator("tickvault_workers")
+    @classmethod
+    def _tickvault_positive_int(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("tickterial.tickvault_workers must be >= 1")
+        return int(value)
+
     @field_validator("batch_pause_ms", "retry_jitter_ms")
     @classmethod
     def _non_negative_int_ms(cls, value: int) -> int:
         if value < 0:
             raise ValueError("value must be >= 0")
         return int(value)
+
+    @field_validator("tickvault_base_dir")
+    @classmethod
+    def _tickvault_base_dir(cls, value: str) -> str:
+        if not value:
+            raise ValueError("tickterial.tickvault_base_dir is empty")
+        return str(value)
 
     @field_validator("source_timestamp_shift_hours", "retry_delay")
     @classmethod
