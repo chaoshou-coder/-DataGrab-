@@ -171,7 +171,7 @@ class QuantDBDataSource(DataSource):
         self.logger = get_logger("datagrab.quantdb")
 
         if cache_dir is None:
-            cache_dir = Path(config.storage.data_root_path) / ".quantdb_cache"
+            cache_dir = Path(config.storage.data_root) / ".quantdb_cache"
         self._cache = QuantDBCache(cache_dir / "quantdb.sqlite")
 
         from .httpx_source import HttpxDataSource

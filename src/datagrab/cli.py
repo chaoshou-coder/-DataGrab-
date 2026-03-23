@@ -2092,6 +2092,7 @@ def main(argv: list[str] | None = None) -> None:
 
     catalog_service = CatalogService(config.data_root_path, config.catalog, config.filters, yfinance_config=config.yfinance)
     rate_limiter = RateLimiter(config.rate_limit)
+    yfinance_source = YFinanceDataSource(config, rate_limiter, catalog_service)
     quantdb_source = QuantDBDataSource(config, rate_limiter, catalog_service)
     baostock_source = BaostockDataSource(config, rate_limiter, catalog_service)
     tickterial_source = TickterialDataSource(config, rate_limiter, catalog_service)
