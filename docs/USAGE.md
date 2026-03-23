@@ -75,7 +75,7 @@ datagrab download --source tickterial --tickterial-backend tickvault --symbols X
 
 - 该路径默认产出到 `<data-root>/tickterial_csv`（可用 `--tickterial-output` 覆盖）；
 - 常用参数：`--tickterial-backend`（`tickterial`/`tickvault`/`auto`）、`--tickterial-workers`、`--tickterial-batch-size`、`--tickterial-batch-pause-ms`、`--tickterial-retry-jitter-ms`；
-- 默认后端采用 `auto`（`tickvault` → `dukascopy-python` → `tickterial` 三级自动回退）；
+- 默认后端采用 `auto`（`dukascopy-python` → `tickvault` → `tickterial` 三级自动回退）；
 - `tickvault` 可通过 `--tickterial-tickvault-workers`、`--tickterial-tickvault-base-dir` 调整性能与磁盘目录。
 - 建议先配合 `--tickterial-validate` 进行下游一致性校验。
 
@@ -252,13 +252,11 @@ datagrab bridge --input-dir ./data/tickterial_csv --output-root ./data --asset-t
 
 ### 快速选择指南
 
-```
-美股长周期（日线以上）→ YFinance（stock）
-美股分钟级（< 730 天）→ YFinance（stock）
-A 股回测（1990-至今）→ baostock（ashare）
-黄金/外汇 tick 级 → tickterial（Dukascopy）
-分钟数据超 730 天外汇 → tickterial
-```
+> 美股长周期（日线以上）→ YFinance（stock）
+> 美股分钟级（< 730 天）→ YFinance（stock）
+> A 股回测（1990-至今）→ baostock（ashare）
+> 黄金/外汇 tick 级 → tickterial（Dukascopy）
+> 分钟数据超 730 天外汇 → tickterial
 
 ---
 

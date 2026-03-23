@@ -4,7 +4,7 @@
 
 - **语言与运行时**：Python 3.11+。
 - **数据处理策略**：主链路基于 `Polars` 与 `PyArrow` 处理 Parquet（ZSTD 压缩）；`tickterial` 链路内部使用 `pandas` 进行 tick 聚合与校验前处理。
-- **并发与限速**：`RateLimiter`（Token Bucket + Sliding Window，支持突发容量、精确计数、jitter 和指数退避）；tickterial 源支持 `tickvault` → `dukascopy-python` → `tickterial` 三级自动回退。
+- **并发与限速**：`RateLimiter`（Token Bucket + Sliding Window，支持突发容量、精确计数、jitter 和指数退避）；tickterial 源支持 `dukascopy-python` → `tickvault` → `tickterial` 三级自动回退。
 - **CLI 与配置**：`argparse` + `pydantic`，通过统一模型完成参数与配置校验。
 - **数据质量**：下载与验数分别形成 `QualityIssue`，支持 ERROR/WARN 分级与导出。
 - **配置来源**：YAML/TOML 文件、环境变量覆盖。
@@ -78,7 +78,7 @@
 
 - **数据范围**：主要货币对从 **2003 年 5 月**起；指数从 2011 年起
 - **复权**：原始报价，不做复权处理
-- **三级回退**：`tickvault` → `dukascopy-python` → `tickterial`（自动选择）
+- **三级回退**：`dukascopy-python` → `tickvault` → `tickterial`（自动选择）
 
 ---
 

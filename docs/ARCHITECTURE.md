@@ -76,7 +76,7 @@ QuantDB SQLite 缓存层 (cache hit <18ms)
 | `datagrab.tickterial.common` | 共享常量与工具函数 |
 | `datagrab.pipeline.catalog` | symbol 拉取、缓存、过滤 |
 | `datagrab.pipeline.downloader` | 任务构建、断点/增量、并发执行 |
-| `datagrab.pipeline.writer` | Parquet 路径规则，区**间合并，原子替换写入（ZSTD 压缩）** |
+| `datagrab.pipeline.writer` | Parquet 路径规则，区间合并，原子替换写入（ZSTD 压缩）** |
 | `datagrab.storage.schema` | OHLCV 列定义与类型 |
 | `datagrab.storage.quality` | `QualityIssue` 与异常等级模型 |
 | `datagrab.storage.validate` | Parquet 扫描与单文件质量校验 |
@@ -119,4 +119,4 @@ QuantDB SQLite 缓存层 (cache hit <18ms)
 | stock | httpx+YFinance（QuantDB 缓存） | ~1970 年（分钟级 730 天） | `none`/`auto`（不支持前/后复权） | 美股等，目录来自 NASDAQ/otherlisted |
 | ashare | baostock → akshare fallback | **1990-12-19**（分钟线 1999-07-26） | **前/后/不复权** | 目录与复权由 baostock 提供 |
 | forex / crypto / commodity | httpx+YFinance（QuantDB 缓存） | ~1970 年（分钟级 730 天） | `none`/`auto` | 下载走 httpx |
-| tickterial（可选） | tickvault → dukascopy-python → tickterial | **2003-05-04**（主要货币对） | 不复权（原始报价） | `--source tickterial` 拉取 Dukascopy 原始 tick，产出 CSV 后可 bridge 到 Parquet |
+| tickterial（可选） | dukascopy-python → tickvault → tickterial | **2003-05-04**（主要货币对） | 不复权（原始报价） | `--source tickterial` 拉取 Dukascopy 原始 tick，产出 CSV 后可 bridge 到 Parquet |
