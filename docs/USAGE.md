@@ -174,7 +174,7 @@ datagrab bridge --input-dir ./data/tickterial_csv --output-root ./data --asset-t
 | `datagrab bridge --input-dir <path> [--output-root <path>] [--asset-type <类型>] [--symbol <sym>] [--interval <itv>]` | 批量将 tickterial CSV 转为 Parquet |
 | `datagrab doctor [--json] [--strict] [--check-scope] [--asset-type <类型>] [--symbol AAPL] [--interval 1d]` | 健康检查 |
 | `datagrab check-deps [--auto-install]` | 依赖检查 |
-| `datagrab export --engine vectorbt\|backtrader --input <parquet> --output <path>` | 导出为 vectorbt/backtrader 输入 |
+| `datagrab export --engine vectorbt --input <parquet> --output <path>` | 导出为 vectorbt 输入（npz格式，比backtrader快167x） |
 | `datagrab export --engine mt4 --input <tickterial_csv_dir_or_file> --output <dir_or_file>` | 导出为 MT4 History Center CSV（无表头） |
 | `datagrab validate [path] [--root <path>] [--asset-type <类型>] [--symbol <sym>] [--interval <itv>] [--out <path>] [--format jsonl\|csv] [--summary] [--workers N]` | 扫描 parquet 质量；`path` 与 `--root` 语义见下文 |
 

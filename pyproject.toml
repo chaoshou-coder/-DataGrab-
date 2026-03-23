@@ -33,6 +33,7 @@ dependencies = [
   "tzdata>=2024.1",
   "pydantic>=2.7.0",
   "tickterial>=1.1.2",
+  "dukascopy-node>=0.2.0",
 ]
 
 [project.optional-dependencies]

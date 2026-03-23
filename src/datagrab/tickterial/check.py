@@ -126,7 +126,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--mvp-script",
-        default=str(Path(__file__).resolve().parents[2] / "scripts" / "tickterial_mvp.py"),
+        default=str(Path(__file__).resolve().parents[3] / "scripts" / "tickterial_mvp.py"),
         help="tickterial_mvp.py path used in repair commands",
     )
     parser.add_argument(

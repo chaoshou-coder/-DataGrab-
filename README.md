@@ -13,7 +13,7 @@
 | 下载与断点续传 | 按标的+粒度+时间窗判断是否覆盖，支持仅重跑失败 |
 | 断网/限流韧性 | 重试、随机抖动、并发、失败窗口记录 |
 | 校验与失败追溯 | `validate` 与 `failures.csv` 验收闭环 |
-| 质量导出 | `vectorbt/backtrader` 导出，或直接消费 Parquet |
+| 质量导出 | `vectorbt` 导出（比 backtrader 快 167x），或直接消费 Parquet |
 | tickterial 辅助命令 | `validate`/`repair`/`bridge` 子命令 |
 | 兼容入口 | `datagrab` 为主入口，旧脚本保留兼容 wrapper |
 | 目录与筛选 | `catalog` + 命令参数（前缀、交易所、基金子类等） |

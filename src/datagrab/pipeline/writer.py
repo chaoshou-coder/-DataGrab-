@@ -181,7 +181,7 @@ class ParquetWriter:
         if metadata:
             table = table.replace_schema_metadata(metadata)
         tmp = output_path.with_suffix(output_path.suffix + ".tmp")
-        pq.write_table(table, tmp)
+        pq.write_table(table, tmp, compression="zstd")
         tmp.replace(output_path)
 
     def _interval_delta(self, interval: str) -> timedelta:

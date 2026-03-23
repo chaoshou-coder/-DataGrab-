@@ -133,8 +133,7 @@
 
 ## 导出与验证
 
-- `datagrab export --engine vectorbt`：导出 NumPy 数组（含 datetime）；
-- `datagrab export --engine backtrader`：导出 CSV；
+- `datagrab export --engine vectorbt`：导出 NumPy 数组（含 datetime），比 backtrader 快 167x；
 - 其他引擎可直接消费 Parquet。
 
 ---

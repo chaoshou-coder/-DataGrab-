@@ -39,25 +39,6 @@ def _normalize_frame(df: pl.DataFrame | pd.DataFrame) -> pl.DataFrame:
     return frame.select(REQUIRED_OHLCV_COLUMNS)
 
 
-def export_backtrader_csv(input_path: Path, output_path: Path) -> None:
-    df = pl.read_parquet(input_path)
-    _validate_ohlcv_columns(df)
-    df = df.rename(
-        {
-            "datetime": "datetime",
-            "open": "open",
-            "high": "high",
-            "low": "low",
-            "close": "close",
-            "volume": "volume",
-        }
-    )
-    if "openinterest" not in df.columns:
-        df = df.with_columns(pl.lit(0).alias("openinterest"))
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    df.write_csv(output_path)
-
-
 def export_vectorbt_npz(input_path: Path, output_path: Path) -> None:
     df = pl.read_parquet(input_path)
     _validate_ohlcv_columns(df)

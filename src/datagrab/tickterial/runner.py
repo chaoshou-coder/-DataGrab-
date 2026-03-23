@@ -32,6 +32,7 @@ from .common import (
 from .exceptions import AggregationError, FetchError
 from .fetch import Tickloader, fetch_ticks
 from . import fetch_tickvault
+from . import fetch_dukas
 
 UTC = timezone.utc
 logger = logging.getLogger(__name__)
@@ -58,7 +59,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-retries", type=int, default=6, help="retry times per hourly tick call")
     parser.add_argument("--retry-delay", type=float, default=1.5, help="base delay seconds between retries")
     parser.add_argument("--download-workers", type=int, default=10, help="max concurrent hourly tick workers")
-    parser.add_argument("--backend", default="auto", help="tickterial 后端: auto|tickterial|tickvault")
+    parser.add_argument("--backend", default="auto", help="tickterial 后端: auto|tickterial|tickvault|dukas")
     parser.add_argument("--tickvault-workers", type=int, default=None, help="tick-vault 并发 worker 数（默认使用 tickterial_workers）")
     parser.add_argument("--tickvault-base-dir", default="", help="tick-vault 缓存目录")
     parser.add_argument("--batch-size", type=int, default=8, help="hourly tasks per batch")
@@ -127,15 +128,21 @@ def _resolve_backend_args(
     selected_backend = getattr(args, "backend", "auto")
     if isinstance(selected_backend, str):
         selected_backend = selected_backend.strip().lower()
-    if selected_backend not in {"auto", "tickterial", "tickvault"}:
+    if selected_backend not in {"auto", "tickterial", "tickvault", "dukas"}:
         logger.warning("unsupported backend=%s, fallback to auto", selected_backend)
         selected_backend = "auto"
 
     if selected_backend == "auto":
-        if fetch_tickvault.TICKVAULT_AVAILABLE:
+        if fetch_dukas.DUKAS_AVAILABLE:
+            selected_backend = "dukas"
+        elif fetch_tickvault.TICKVAULT_AVAILABLE:
             selected_backend = "tickvault"
         else:
             selected_backend = "tickterial"
+
+    if selected_backend == "dukas":
+        workers = getattr(args, "download_workers", 10)
+        return "dukas", max(1, int(workers))
 
     if selected_backend == "tickvault":
         base_dir = (getattr(args, "tickvault_base_dir", "") or "").strip()
@@ -173,34 +180,39 @@ def _load_ticks_for_window(
     source_timestamp_shift_hours: float,
 ) -> pd.DataFrame:
     backend, workers = _resolve_backend_args(args, symbol=symbol, win_start=win_start, win_end=win_end)
+    if backend == "dukas":
+        logger.info("dukascopy backend: %s [%s->%s]", symbol, win_start.isoformat(), win_end.isoformat())
+        try:
+            return fetch_dukas.fetch_ticks(symbol, win_start, win_end, workers=workers)
+        except FetchError as exc:
+            if getattr(args, "backend", "auto") == "dukas":
+                raise
+            logger.warning("dukascopy failed, trying tickvault: %s", exc)
+            if fetch_tickvault.TICKVAULT_AVAILABLE:
+                return fetch_tickvault.fetch_ticks(
+                    symbol,
+                    win_start,
+                    win_end,
+                    base_dir=str(getattr(args, "tickvault_base_dir", "") or str(Path(args.cache_dir).resolve() / "tick_vault_data")),
+                    workers=args.download_workers,
+                )
+            raise FetchError(f"dukascopy backend failed and tickvault unavailable: {exc}") from exc
+        except Exception as exc:
+            raise FetchError(f"dukascopy backend failed: {exc}") from exc
     if backend == "tickvault":
         logger.info("tick-vault backend: %s [%s->%s]", symbol, win_start.isoformat(), win_end.isoformat())
-        return fetch_tickvault.fetch_ticks(
-            symbol,
-            win_start,
-            win_end,
-            base_dir=str(getattr(args, "tickvault_base_dir", "") or str(Path(args.cache_dir).resolve() / "tick_vault_data")),
-            workers=workers,
-        )
-    try:
-        return fetch_ticks(
-            symbol,
-            win_start,
-            win_end,
-            max_retries,
-            retry_delay,
-            args.download_workers,
-            batch_size,
-            batch_pause_ms,
-            retry_jitter_ms,
-            cache_dir,
-            source_timestamp_shift_hours,
-        )
-    except FetchError as exc:
-        if getattr(args, "backend", "auto") == "tickvault":
-            raise
-        if getattr(args, "backend", "auto") == "auto":
-            logger.warning("tick-vault failover failed, fallback to tickterial: %s", exc)
+        try:
+            return fetch_tickvault.fetch_ticks(
+                symbol,
+                win_start,
+                win_end,
+                base_dir=str(getattr(args, "tickvault_base_dir", "") or str(Path(args.cache_dir).resolve() / "tick_vault_data")),
+                workers=workers,
+            )
+        except FetchError as exc:
+            if getattr(args, "backend", "auto") == "tickvault":
+                raise
+            logger.warning("tickvault failed, trying legacy: %s", exc)
             return fetch_ticks(
                 symbol,
                 win_start,
@@ -214,9 +226,37 @@ def _load_ticks_for_window(
                 cache_dir,
                 source_timestamp_shift_hours,
             )
-        raise
-
-    raise RuntimeError("unreachable")
+        except Exception as exc:
+            if getattr(args, "backend", "auto") == "tickvault":
+                raise FetchError(f"tickvault backend failed: {exc}") from exc
+            logger.warning("tickvault failed, trying legacy: %s", exc)
+            return fetch_ticks(
+                symbol,
+                win_start,
+                win_end,
+                max_retries,
+                retry_delay,
+                args.download_workers,
+                batch_size,
+                batch_pause_ms,
+                retry_jitter_ms,
+                cache_dir,
+                source_timestamp_shift_hours,
+            )
+    # legacy tickterial — last resort, no fallback
+    return fetch_ticks(
+        symbol,
+        win_start,
+        win_end,
+        max_retries,
+        retry_delay,
+        args.download_workers,
+        batch_size,
+        batch_pause_ms,
+        retry_jitter_ms,
+        cache_dir,
+        source_timestamp_shift_hours,
+    )
 
 
 def _with_atomic_write(path: Path, rows: list[dict[str, str]], fieldnames: list[str]) -> None:

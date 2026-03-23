@@ -21,8 +21,8 @@ from .sources.baostock_source import BaostockDataSource
 from .sources.router import SourceRouter
 from .sources.yfinance_source import YFinanceDataSource
 from .sources.tickterial_source import TickterialDataSource
+from .sources.quantdb_source import QuantDBDataSource
 from .storage.export import (
-    export_backtrader_csv,
     export_mt4_batch,
     export_mt4_csv,
     export_vectorbt_npz,
@@ -164,7 +164,7 @@ def build_parser() -> argparse.ArgumentParser:
     doctor_parser.add_argument("--interval", type=str, help="for scope check, interval token")
 
     export_parser = subparsers.add_parser("export", help="export data for engines")
-    export_parser.add_argument("--engine", choices=["vectorbt", "backtrader", "mt4"], required=True)
+    export_parser.add_argument("--engine", choices=["vectorbt", "mt4"], required=True)
     export_parser.add_argument("--input", required=True)
     export_parser.add_argument("--output", required=True)
     export_parser.add_argument("--symbol", default="", help="mt4 batch export symbol filter")
@@ -2035,8 +2035,6 @@ def main(argv: list[str] | None = None) -> None:
         output_path = Path(args.output)
         if args.engine == "vectorbt":
             export_vectorbt_npz(input_path, output_path)
-        elif args.engine == "backtrader":
-            export_backtrader_csv(input_path, output_path)
         else:
             if input_path.is_dir():
                 if output_path.suffix:
@@ -2094,10 +2092,14 @@ def main(argv: list[str] | None = None) -> None:
 
     catalog_service = CatalogService(config.data_root_path, config.catalog, config.filters, yfinance_config=config.yfinance)
     rate_limiter = RateLimiter(config.rate_limit)
-    yfinance_source = YFinanceDataSource(config, rate_limiter, catalog_service)
+    quantdb_source = QuantDBDataSource(config, rate_limiter, catalog_service)
     baostock_source = BaostockDataSource(config, rate_limiter, catalog_service)
     tickterial_source = TickterialDataSource(config, rate_limiter, catalog_service)
-    source = SourceRouter(yfinance_source, {"ashare": baostock_source}, allowed_asset_types=config.asset_types)
+    source = SourceRouter(
+        quantdb_source,
+        {"ashare": baostock_source},
+        allowed_asset_types=config.asset_types,
+    )
     writer = ParquetWriter(config.data_root_path, merge_on_incremental=config.storage.merge_on_incremental)
 
     if args.command == "catalog":
