@@ -45,3 +45,6 @@ venv/
 sample/get_data.py
 sample/get_all_symbol.py
 config.yaml
+
+# 本地脚本
+scripts/cache_to_csv_*.py
