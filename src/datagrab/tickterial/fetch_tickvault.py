@@ -125,7 +125,7 @@ def _normalize_ticks_dataframe(raw: pd.DataFrame, window_start: datetime, window
     price_key = _first_present(frame.columns, ("price", "last", "mid", "close"))
     ask_key = _first_present(frame.columns, ("ask", "ask_price"))
     bid_key = _first_present(frame.columns, ("bid", "bid_price"))
-    vol_key = _first_present(frame.columns, ("volume", "ask_volume", "bid_volume", "ask-volume", "bid-volume"))
+    vol_key = _first_present(frame.columns, ("volume", "ask-volume", "bid-volume"))
     ask_volume_key = _first_present(frame.columns, ("ask_volume", "ask-vol", "askvol", "ask_volume_", "ask_qty"))
     bid_volume_key = _first_present(frame.columns, ("bid_volume", "bid-vol", "bidvol", "bid_qty"))
 

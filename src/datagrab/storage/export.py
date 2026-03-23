@@ -72,10 +72,10 @@ def export_mt4_csv(df: pl.DataFrame | pd.DataFrame, output_path: Path) -> None:
         {
             "date": pd.to_datetime(pdf["datetime"]).dt.strftime("%Y.%m.%d"),
             "time": pd.to_datetime(pdf["datetime"]).dt.strftime("%H:%M"),
-            "open": pd.to_numeric(pdf["open"], errors="raise"),
-            "high": pd.to_numeric(pdf["high"], errors="raise"),
-            "low": pd.to_numeric(pdf["low"], errors="raise"),
-            "close": pd.to_numeric(pdf["close"], errors="raise"),
+            "open": pd.to_numeric(pdf["open"], errors="raise").astype("float64"),
+            "high": pd.to_numeric(pdf["high"], errors="raise").astype("float64"),
+            "low": pd.to_numeric(pdf["low"], errors="raise").astype("float64"),
+            "close": pd.to_numeric(pdf["close"], errors="raise").astype("float64"),
             "volume": pd.to_numeric(pdf["volume"], errors="coerce")
             .fillna(0.0)
             .round(0)
@@ -125,7 +125,7 @@ def export_mt4_batch(
             pdf = pd.read_csv(csv_path, encoding="utf-8")
             frame = _normalize_frame(pdf)
             frames.append(frame)
-        merged = pl.concat(frames).sort("datetime")
+        merged = pl.concat(frames, how="vertical_relaxed").sort("datetime")
         merged = merged.unique(subset=["datetime"], keep="last").sort("datetime")
 
         output_name = f"{symbol}_{_to_mt4_interval(interval)}.csv"
