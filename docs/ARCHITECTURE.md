@@ -76,7 +76,7 @@ QuantDB SQLite 缓存层 (cache hit <18ms)
 | `datagrab.tickterial.common` | 共享常量与工具函数 |
 | `datagrab.pipeline.catalog` | symbol 拉取、缓存、过滤 |
 | `datagrab.pipeline.downloader` | 任务构建、断点/增量、并发执行 |
-| `datagrab.pipeline.writer` | Parquet 路径规则，区间合并，原子替换写入（ZSTD 压缩）** |
+| `datagrab.pipeline.writer` | Parquet 路径规则，区间合并，原子替换写入（ZSTD 压缩） |
 | `datagrab.storage.schema` | OHLCV 列定义与类型 |
 | `datagrab.storage.quality` | `QualityIssue` 与异常等级模型 |
 | `datagrab.storage.validate` | Parquet 扫描与单文件质量校验 |
