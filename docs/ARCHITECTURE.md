@@ -52,7 +52,7 @@ QuantDB SQLite 缓存层 (cache hit <18ms)
 ## 模块划分
 
 | 模块/包 | 职责 |
-|---|
+|---|---|
 | `datagrab.cli` | CLI 入口，统一解析命令与参数、加载配置、路由子命令 |
 | `datagrab.validation` | `pydantic` 校验（CLI 参数、配置、failures）及错误映射 |
 | `datagrab.config` | 配置加载（YAML/TOML）、默认值、环境变量覆盖 |
