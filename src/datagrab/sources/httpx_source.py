@@ -194,8 +194,19 @@ class HttpxDataSource(DataSource):
 
     def __del__(self) -> None:
         """Ensure client is closed on deletion."""
-        if self._client is not None:
+        if self._client is None:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No running loop — safe to create one
             try:
                 asyncio.run(self.close())
+            except Exception:
+                pass
+        else:
+            # Running loop exists — create a close task (fire-and-forget)
+            try:
+                loop.create_task(self.close())
             except Exception:
                 pass

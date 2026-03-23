@@ -62,8 +62,6 @@ async def fetch_ticks_async(
     symbol: str,
     window_start: datetime,
     window_end: datetime,
-    *,
-    workers: int = 10,
 ) -> pd.DataFrame:
     """Fetch ticks from Dukascopy using dukascopy-python.
 
@@ -71,7 +69,6 @@ async def fetch_ticks_async(
         symbol: Instrument symbol (e.g. "XAUUSD", "XAGUSD").
         window_start: Start of the download window.
         window_end: End of the download window.
-        workers: Number of concurrent download workers.
 
     Returns:
         DataFrame with datetime, price, volume columns.
@@ -125,12 +122,10 @@ def fetch_ticks(
     symbol: str,
     window_start: datetime,
     window_end: datetime,
-    *,
-    workers: int = 10,
 ) -> pd.DataFrame:
     """Synchronous wrapper of :func:`fetch_ticks_async`."""
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
-        return asyncio.run(fetch_ticks_async(symbol, window_start, window_end, workers=workers))
+        return asyncio.run(fetch_ticks_async(symbol, window_start, window_end))
     raise FetchError("fetch_ticks called within running asyncio loop; call fetch_ticks_async directly")

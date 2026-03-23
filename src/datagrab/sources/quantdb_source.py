@@ -72,7 +72,7 @@ class QuantDBCache:
             )
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute("PRAGMA synchronous=NORMAL")
-            self._conn.execute("PRAGMA cache_size=-64000")  # 64MB cache
+            self._conn.execute("PRAGMA cache_size=-65536")  # 64MB cache (65536 KB)
         return self._conn
 
     def _serialize(self, df: pl.DataFrame) -> bytes:

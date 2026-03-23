@@ -135,16 +135,20 @@ class RateLimiter:
         if self.config.requests_per_second <= 0:
             return
 
+        # Determine wait time from both algorithms — use whichever requires more
         bucket_wait = self._bucket.consume(1.0)
 
+        window_wait = 0.0
         while not self._window.can_request():
             window_wait = self._window.wait_time()
             if window_wait > 0:
                 await asyncio.sleep(window_wait)
+                break  # after sleeping once, re-check bucket (which may now allow)
 
         self._window.record_request()
 
-        total_wait = bucket_wait
+        # Use whichever algorithm required the longer wait
+        total_wait = max(bucket_wait, window_wait)
         if self.config.jitter_max > 0:
             total_wait += random.uniform(self.config.jitter_min, self.config.jitter_max)
 

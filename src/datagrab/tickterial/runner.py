@@ -141,8 +141,7 @@ def _resolve_backend_args(
             selected_backend = "tickterial"
 
     if selected_backend == "dukas":
-        workers = getattr(args, "download_workers", 10)
-        return "dukas", max(1, int(workers))
+        return "dukas", 1
 
     if selected_backend == "tickvault":
         base_dir = (getattr(args, "tickvault_base_dir", "") or "").strip()
@@ -183,7 +182,7 @@ def _load_ticks_for_window(
     if backend == "dukas":
         logger.info("dukascopy backend: %s [%s->%s]", symbol, win_start.isoformat(), win_end.isoformat())
         try:
-            return fetch_dukas.fetch_ticks(symbol, win_start, win_end, workers=workers)
+            return fetch_dukas.fetch_ticks(symbol, win_start, win_end)
         except FetchError as exc:
             if getattr(args, "backend", "auto") == "dukas":
                 raise
