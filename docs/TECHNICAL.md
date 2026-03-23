@@ -3,8 +3,8 @@
 ## 技术选型
 
 - **语言与运行时**：Python 3.11+。
-- **数据处理策略**：主链路统一基于 `Polars` 与 `PyArrow` 处理 Parquet；`tickterial` 链路内部使用 `pandas` 进行 tick 聚合与校验前处理，底层下载支持 `tickterial` 与 `tick-vault` 双后端，默认优先尝试 `tick-vault`。
-- **并发与限速**：非 tickterial 源使用 `RateLimiter`（请求/秒 + 随机抖动 + 429 指数退避）；tickterial 源支持 `tickterial` 与 `tick-vault` 双后端，后者支持异步并发下载。
+- **数据处理策略**：主链路基于 `Polars` 与 `PyArrow` 处理 Parquet（ZSTD 压缩）；`tickterial` 链路内部使用 `pandas` 进行 tick 聚合与校验前处理。
+- **并发与限速**：`RateLimiter`（Token Bucket + Sliding Window，支持突发容量、精确计数、jitter 和指数退避）；tickterial 源支持 `tickvault` → `dukascopy-python` → `tickterial` 三级自动回退。
 - **CLI 与配置**：`argparse` + `pydantic`，通过统一模型完成参数与配置校验。
 - **数据质量**：下载与验数分别形成 `QualityIssue`，支持 ERROR/WARN 分级与导出。
 - **配置来源**：YAML/TOML 文件、环境变量覆盖。
@@ -145,16 +145,17 @@
 - `yfinance`
 - `polars`
 - `pyarrow`
-- `httpx`
+- `httpx`（异步 HTTP 客户端）
 - `pyyaml`
 - `numpy`
 - `pandas`
 - `baostock`
-- `akshare`
+- `akshare`（A 股 fallback）
 - `pydantic`
 - `ruff`
 - `mypy`
 - `tickterial>=1.1.2`
+- `dukascopy-node`（Dukascopy tick 下载）
 - `tick-vault`（可选，`pip install .[tickvault]` 安装）
 
 开发校验建议：

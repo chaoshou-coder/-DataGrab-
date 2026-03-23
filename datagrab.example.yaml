@@ -16,9 +16,16 @@ download:
 rate_limit:
   # 最大请求频率（建议 0.5~2.0）
   requests_per_second: 2.0
+  # Token Bucket 突发容量（默认等于 requests_per_second）
+  burst_capacity: 2.0
+  # Sliding Window 时间窗口（秒）
+  window_seconds: 1.0
   # 限速抖动区间（秒）
   jitter_min: 0.2
   jitter_max: 0.6
+  # 指数退避基数
+  backoff_base: 1.5
+  backoff_max: 30.0
 
 baostock:
   # A股复权方式：back(后复权)/front(前复权)/none(不复权)

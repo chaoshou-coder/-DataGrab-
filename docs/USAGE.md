@@ -75,7 +75,7 @@ datagrab download --source tickterial --tickterial-backend tickvault --symbols X
 
 - 该路径默认产出到 `<data-root>/tickterial_csv`（可用 `--tickterial-output` 覆盖）；
 - 常用参数：`--tickterial-backend`（`tickterial`/`tickvault`/`auto`）、`--tickterial-workers`、`--tickterial-batch-size`、`--tickterial-batch-pause-ms`、`--tickterial-retry-jitter-ms`；
-- 默认后端采用 `tickvault`（若未安装则自动退回 `tickterial`）；
+- 默认后端采用 `auto`（`tickvault` → `dukascopy-python` → `tickterial` 三级自动回退）；
 - `tickvault` 可通过 `--tickterial-tickvault-workers`、`--tickterial-tickvault-base-dir` 调整性能与磁盘目录。
 - 建议先配合 `--tickterial-validate` 进行下游一致性校验。
 
@@ -214,10 +214,10 @@ datagrab bridge --input-dir ./data/tickterial_csv --output-root ./data --asset-t
 
 | asset_type | 数据源 | 说明 |
 |---|---|---|
-| stock | yfinance | 美股等，目录来自 NASDAQ 列表 |
-| ashare | baostock | A 股，目录与复权由 baostock 提供 |
-| forex / crypto / commodity | yfinance + 预设列表 | 下载走 yfinance |
-| tickterial | tickterial | Dukascopy 互补品种，下载产物为 CSV 主输出 |
+| stock | httpx + YFinance（QuantDB 缓存） | 美股等，目录来自 NASDAQ 列表 |
+| ashare | baostock → akshare fallback | A 股，目录与复权由 baostock 提供 |
+| forex / crypto / commodity | httpx + YFinance（QuantDB 缓存） | 下载走 httpx |
+| tickterial | tickvault → dukascopy-python → tickterial | Dukascopy 互补品种，下载产物为 CSV 主输出 |
 
 ---
 

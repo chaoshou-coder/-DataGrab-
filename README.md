@@ -1,6 +1,6 @@
 # 财采 (DataGrab)
 
-**财采（DataGrab）**是一款高并发、可断点续传与增量更新的历史行情下载器，覆盖美股（Yahoo Finance）、A 股（baostock）以及 Dukascopy 补充源（tickterial）。
+**财采（DataGrab）**是一款高并发、可断点续传与增量更新的历史行情下载器，覆盖美股（Yahoo Finance + httpx）、A 股（baostock + akshare）以及 Dukascopy 互补品种（tickterial）。
 
 项目面向三类使用场景：可复用的 CLI 运维链路、可验证的质量约束、以及可直接用于回测引擎的标准化存储。
 
@@ -9,11 +9,16 @@
 | 能力 | 说明 |
 |---|---|
 | 多市场支持 | 美股/ETF（`stock`）、A 股（`ashare`）、forex/crypto/commodity（预设名单） |
+| httpx 异步下载 | 美股/外汇/加密货币基于 httpx 异步客户端，连接复用，QuantDB SQLite 缓存（首次 ~1s，后续 <18ms） |
+| A 股双源冗余 | baostock 优先，akshare 自动降级（无需认证） |
+| Dukascopy 三级回退 | `tickvault` → `dukascopy-python` → `tickterial` 自动选择（默认 `auto`） |
+| Token Bucket 限流 | 突发容量 + Sliding Window 精确计数，支持 jitter 和指数退避 |
+| ZSTD 压缩存储 | Parquet 默认 ZSTD 压缩（2.8-3x vs SNAPPY 2x） |
 | tickterial 原始源 | `--source tickterial` 拉取 Dukascopy 互补品种，默认产出 CSV |
 | 下载与断点续传 | 按标的+粒度+时间窗判断是否覆盖，支持仅重跑失败 |
 | 断网/限流韧性 | 重试、随机抖动、并发、失败窗口记录 |
 | 校验与失败追溯 | `validate` 与 `failures.csv` 验收闭环 |
-| 质量导出 | `vectorbt` 导出（比 backtrader 快 167x），或直接消费 Parquet |
+| 质量导出 | `vectorbt` 导出（npz）或 MT4 History Center CSV（`YYYY.MM.DD,HH:MM`） |
 | tickterial 辅助命令 | `validate`/`repair`/`bridge` 子命令 |
 | 兼容入口 | `datagrab` 为主入口，旧脚本保留兼容 wrapper |
 | 目录与筛选 | `catalog` + 命令参数（前缀、交易所、基金子类等） |
@@ -79,7 +84,7 @@ pip install -e .
 | [docs/USAGE.md](docs/USAGE.md) | CLI 参考、参数示例、常见问题 |
 | [docs/doctor-runbook.md](docs/doctor-runbook.md) | doctor 失败排障流程 |
 | [docs/tickterial_ops/README.md](docs/tickterial_ops/README.md) | Tickterial 下载/检验/修复/桥接运维 |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | 贡献与提交流程 |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | 贡献与提交流流 |
 
 ## 许可与贡献
 
