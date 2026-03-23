@@ -187,62 +187,36 @@ def _load_ticks_for_window(
             if getattr(args, "backend", "auto") == "dukas":
                 raise
             logger.warning("dukascopy failed, trying tickvault: %s", exc)
-            if fetch_tickvault.TICKVAULT_AVAILABLE:
-                return fetch_tickvault.fetch_ticks(
-                    symbol,
-                    win_start,
-                    win_end,
-                    base_dir=str(getattr(args, "tickvault_base_dir", "") or str(Path(args.cache_dir).resolve() / "tick_vault_data")),
-                    workers=args.download_workers,
-                )
-            raise FetchError(f"dukascopy backend failed and tickvault unavailable: {exc}") from exc
         except Exception as exc:
             raise FetchError(f"dukascopy backend failed: {exc}") from exc
-    if backend == "tickvault":
-        logger.info("tick-vault backend: %s [%s->%s]", symbol, win_start.isoformat(), win_end.isoformat())
+
+    if backend in ("dukas", "tickvault"):
+        tickvault_base_dir = str(
+            getattr(args, "tickvault_base_dir", "") or str(Path(args.cache_dir).resolve() / "tick_vault_data")
+        )
+        if backend == "tickvault":
+            logger.info("tick-vault backend: %s [%s->%s]", symbol, win_start.isoformat(), win_end.isoformat())
+        else:
+            logger.info("tickvault backend (fallback): %s [%s->%s]", symbol, win_start.isoformat(), win_end.isoformat())
+
         try:
             return fetch_tickvault.fetch_ticks(
                 symbol,
                 win_start,
                 win_end,
-                base_dir=str(getattr(args, "tickvault_base_dir", "") or str(Path(args.cache_dir).resolve() / "tick_vault_data")),
-                workers=workers,
+                base_dir=tickvault_base_dir,
+                workers=args.download_workers,
             )
         except FetchError as exc:
             if getattr(args, "backend", "auto") == "tickvault":
                 raise
-            logger.warning("tickvault failed, trying legacy: %s", exc)
-            return fetch_ticks(
-                symbol,
-                win_start,
-                win_end,
-                max_retries,
-                retry_delay,
-                args.download_workers,
-                batch_size,
-                batch_pause_ms,
-                retry_jitter_ms,
-                cache_dir,
-                source_timestamp_shift_hours,
-            )
+            logger.warning("tickvault failed, falling back to legacy: %s", exc)
         except Exception as exc:
             if getattr(args, "backend", "auto") == "tickvault":
                 raise FetchError(f"tickvault backend failed: {exc}") from exc
-            logger.warning("tickvault failed, trying legacy: %s", exc)
-            return fetch_ticks(
-                symbol,
-                win_start,
-                win_end,
-                max_retries,
-                retry_delay,
-                args.download_workers,
-                batch_size,
-                batch_pause_ms,
-                retry_jitter_ms,
-                cache_dir,
-                source_timestamp_shift_hours,
-            )
-    # legacy tickterial — last resort, no fallback
+            logger.warning("tickvault failed, falling back to legacy: %s", exc)
+
+    # legacy tickterial — last resort
     return fetch_ticks(
         symbol,
         win_start,

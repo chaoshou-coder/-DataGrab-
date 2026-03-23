@@ -204,7 +204,14 @@ class QuantDBDataSource(DataSource):
             return OhlcvResult(data=cached, adjustment=adjust)
 
         self.logger.info("quantdb cache miss %s %s, fetching via httpx", symbol, interval)
-        result = self._delegate.fetch_ohlcv(symbol, interval, start, end, adjust)
+        try:
+            result = self._delegate.fetch_ohlcv(symbol, interval, start, end, adjust)
+        except Exception as exc:
+            self.logger.warning("httpx fetch failed for %s, trying yfinance fallback: %s", symbol, exc)
+            from .yfinance_source import YFinanceDataSource
+
+            yf_ds = YFinanceDataSource(self.config, self.rate_limiter, self.catalog)
+            result = yf_ds.fetch_ohlcv(symbol, interval, start, end, adjust)
 
         if not result.data.is_empty():
             self._cache.put(symbol, interval, start, end, result.data)

@@ -77,6 +77,20 @@ class SlidingWindowCounter:
             self._expire(now)
             self._request_count += 1
 
+    def check_and_wait(self) -> tuple[bool, float]:
+        """Atomically check if request is allowed and return wait time if not.
+
+        Returns (allowed, wait_seconds): allowed=True means request can proceed now;
+        allowed=False means caller should sleep for wait_seconds first.
+        """
+        with self._lock:
+            now = time.monotonic()
+            self._expire(now)
+            if self._request_count < self.max_requests:
+                return True, 0.0
+            elapsed = now - self._window_start
+            return False, self.window_seconds - elapsed
+
     def wait_time(self) -> float:
         """Return seconds until a request would be allowed."""
         with self._lock:
@@ -84,7 +98,6 @@ class SlidingWindowCounter:
             self._expire(now)
             if self._request_count < self.max_requests:
                 return 0.0
-            # How far into the current window are we?
             elapsed = now - self._window_start
             return self.window_seconds - elapsed
 
@@ -108,18 +121,16 @@ class RateLimiter:
         if self.config.requests_per_second <= 0:
             return
 
-        # Determine max wait time from both algorithms
         bucket_wait = self._bucket.consume(1.0)
 
-        # Also check sliding window
-        while not self._window.can_request():
-            window_wait = self._window.wait_time()
-            if window_wait > 0:
-                time.sleep(window_wait)
+        allowed, window_wait = self._window.check_and_wait()
+        if not allowed and window_wait > 0:
+            time.sleep(window_wait)
+            allowed, window_wait = self._window.check_and_wait()
 
         self._window.record_request()
 
-        total_wait = bucket_wait
+        total_wait = max(bucket_wait, window_wait)
         if self.config.jitter_max > 0:
             total_wait += random.uniform(self.config.jitter_min, self.config.jitter_max)
 
@@ -135,19 +146,15 @@ class RateLimiter:
         if self.config.requests_per_second <= 0:
             return
 
-        # Determine wait time from both algorithms — use whichever requires more
         bucket_wait = self._bucket.consume(1.0)
 
-        window_wait = 0.0
-        while not self._window.can_request():
-            window_wait = self._window.wait_time()
-            if window_wait > 0:
-                await asyncio.sleep(window_wait)
-                break  # after sleeping once, re-check bucket (which may now allow)
+        allowed, window_wait = self._window.check_and_wait()
+        if not allowed and window_wait > 0:
+            await asyncio.sleep(window_wait)
+            allowed, window_wait = self._window.check_and_wait()
 
         self._window.record_request()
 
-        # Use whichever algorithm required the longer wait
         total_wait = max(bucket_wait, window_wait)
         if self.config.jitter_max > 0:
             total_wait += random.uniform(self.config.jitter_min, self.config.jitter_max)

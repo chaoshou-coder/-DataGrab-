@@ -1,9 +1,8 @@
-"""OHLCV bar aggregation using polars for multi-core parallelism.
+"""OHLCV bar aggregation for tick data processing.
 
-This module replaces the pandas-based aggregation with polars, providing
-5-30x speedup through multi-core parallel processing while maintaining
-a pandas-compatible interface for the runner.py consumer.
-"""
+Provides OHLCV bar builders (1m, multi-minute, daily NY-close) and
+integrity check utilities. Uses pandas internally for compatibility
+with the tickterial pipeline."""
 
 from __future__ import annotations
 

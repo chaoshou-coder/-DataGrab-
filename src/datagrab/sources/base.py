@@ -30,6 +30,20 @@ class OhlcvResult:
     metadata: dict[str, str] | None = None
 
 
+# -----------------------------------------------------------------------------
+# Architecture constraint: timezone convention
+# -----------------------------------------------------------------------------
+# All DataSource implementations MUST return UTC-naive datetime values.
+# However, current implementations vary by asset class:
+#   - stock/forex/crypto sources (httpx, yfinance, baostock) -> Asia/Shanghai naive
+#   - tickterial/tickvault sources -> UTC naive
+#
+# This is acceptable because each source serves a different asset class — they
+# are never mixed for the same symbol. If cross-source comparison is needed,
+# normalize all timestamps to UTC first.
+# -----------------------------------------------------------------------------
+
+
 class DataSource(ABC):
     @abstractmethod
     def list_symbols(

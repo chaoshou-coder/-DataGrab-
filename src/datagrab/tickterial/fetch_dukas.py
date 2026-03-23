@@ -128,4 +128,7 @@ def fetch_ticks(
         loop = asyncio.get_running_loop()
     except RuntimeError:
         return asyncio.run(fetch_ticks_async(symbol, window_start, window_end))
-    raise FetchError("fetch_ticks called within running asyncio loop; call fetch_ticks_async directly")
+    raise FetchError(
+        "fetch_ticks called within a running asyncio loop; "
+        "call fetch_ticks_async directly instead"
+    )

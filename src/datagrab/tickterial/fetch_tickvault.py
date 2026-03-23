@@ -297,4 +297,7 @@ def fetch_ticks(
                 workers=workers,
             )
         )
-    raise FetchError("fetch_ticks called within running asyncio loop; call fetch_ticks_async directly")
+    raise FetchError(
+        "fetch_ticks called within a running asyncio loop; "
+        "call fetch_ticks_async directly instead"
+    )

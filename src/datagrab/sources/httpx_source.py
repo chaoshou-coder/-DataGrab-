@@ -72,7 +72,14 @@ class HttpxDataSource(DataSource):
         end: datetime,
         adjust: str,
     ) -> OhlcvResult:
-        return asyncio.run(self._fetch_ohlcv_async(symbol, interval, start, end, adjust))
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(self._fetch_ohlcv_async(symbol, interval, start, end, adjust))
+        raise RuntimeError(
+            "fetch_ohlcv called within a running asyncio loop; "
+            "call _fetch_ohlcv_async directly instead"
+        )
 
     async def _fetch_ohlcv_async(
         self,
@@ -191,22 +198,3 @@ class HttpxDataSource(DataSource):
         if self._client:
             await self._client.aclose()
             self._client = None
-
-    def __del__(self) -> None:
-        """Ensure client is closed on deletion."""
-        if self._client is None:
-            return
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            # No running loop — safe to create one
-            try:
-                asyncio.run(self.close())
-            except Exception:
-                pass
-        else:
-            # Running loop exists — create a close task (fire-and-forget)
-            try:
-                loop.create_task(self.close())
-            except Exception:
-                pass
