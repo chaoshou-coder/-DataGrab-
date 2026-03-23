@@ -212,12 +212,53 @@ datagrab bridge --input-dir ./data/tickterial_csv --output-root ./data --asset-t
 
 ## 资产类型与数据源
 
-| asset_type | 数据源 | 说明 |
-|---|---|---|
-| stock | httpx + YFinance（QuantDB 缓存） | 美股等，目录来自 NASDAQ 列表 |
-| ashare | baostock → akshare fallback | A 股，目录与复权由 baostock 提供 |
-| forex / crypto / commodity | httpx + YFinance（QuantDB 缓存） | 下载走 httpx |
-| tickterial | tickvault → dukascopy-python → tickterial | Dukascopy 互补品种，下载产物为 CSV 主输出 |
+### 数据源能力边界速查
+
+| 数据源 | 支持品种 | 最早数据 | 粒度支持 | 复权方式 | 说明 |
+|---|---|---|---|---|---|
+| **YFinance** | 美股/ETF/基金/forex/crypto/commodity | 约 1970 年起（个股受限于上市日期） | 1d/1wk/1mo/分钟级（近 730 天） | `none`/`auto` | Yahoo Finance API；分钟级数据仅最近 730 天；`auto` 根据 period 自动选择 |
+| **baostock** | A 股（沪深） | **1990-12-19** 起 | 5/15/30/60 分钟、日/周/月线 | **前复权**/`后复权`/**不复权** | 分钟线仅 1999-07-26 起；前复权适合回测 |
+| **akshare**（fallback） | A 股（沪深） | **2005 年**起 | 日线为主 | 不复权或手动处理 | 当 baostock 不可用时降级；东财/网易数据源 |
+| **Dukascopy**（tickterial） | forex/metal/指数/商品 | **2003 年 5 月**起（主要货币对） | tick / M1 / M5 / M15 / H1 / D1 | 不复权（原始报价） | 最高质量 tick 级数据；主要货币对从 2003 年起 |
+
+### 各数据源详细说明
+
+#### YFinance（stock / forex / crypto / commodity）
+- **数据范围**：约 1970 年至今（股票受限于上市日期，最长不超过 100 年窗口）
+- **粒度限制**：日线/周线/月线无限制；分钟级数据（1m/2m/5m/15m/30m/60m）**仅最近 730 天**
+- **复权**：`none`（不复权）/ `auto`（自动，根据 period 决定是否复权）；不支持前复权/后复权
+- **数据内容**：含分红、拆股信息，可通过 `actions=True` 获取
+- **注意**：分钟级历史数据有 730 天限制，超出范围会返回空数据
+
+#### baostock（A 股）
+- **数据范围**：**1990-12-19** 起（日线）；**1999-07-26** 起（分钟线 5/15/30/60 分钟）
+- **粒度**：5 分钟、15 分钟、30 分钟、60 分钟、日线、周线、月线
+- **复权**：`back`（后复权）/ `forward`（前复权）/ `none`（不复权）
+- **推荐**：回测建议使用前复权（`forward`），使历史价格等于当时真实市场价
+- **索引数据**：2006-01-01 起
+
+#### akshare（A 股 fallback）
+- **数据范围**：约 **2005 年**起（部分品种可能更早）
+- **粒度**：日线为主
+- **复权**：部分接口不支持复权，需手动处理；东财数据源（`stock_zh_a_hist`）可直接选不复权
+- **用途**：baostock 不可用时的降级方案
+
+#### Dukascopy（tickterial）
+- **数据范围**：主要货币对从 **2003 年 5 月**起；指数从 2011 年起；商品/加密/股票各品种各异
+- **粒度**：tick 级原始数据，可聚合为任意周期（M1/M5/M15/H1/D1 等）
+- **复权**：原始报价，不做复权处理
+- **代表品种**：XAUUSD（黄金）、XAGUSD（白银）、EURUSD、GBPUSD 等外汇及大宗商品
+- **注意**：不同品种最早数据日期不同，具体以 `datagrab update-symbols --source tickterial` 返回的列表为准
+
+### 快速选择指南
+
+```
+美股长周期（日线以上）→ YFinance（stock）
+美股分钟级（< 730 天）→ YFinance（stock）
+A 股回测（1990-至今）→ baostock（ashare）
+黄金/外汇 tick 级 → tickterial（Dukascopy）
+分钟数据超 730 天外汇 → tickterial
+```
 
 ---
 
