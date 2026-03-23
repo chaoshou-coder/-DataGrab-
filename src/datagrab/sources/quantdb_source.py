@@ -208,6 +208,9 @@ class QuantDBDataSource(DataSource):
             result = self._delegate.fetch_ohlcv(symbol, interval, start, end, adjust)
         except Exception as exc:
             self.logger.warning("httpx fetch failed for %s, trying yfinance fallback: %s", symbol, exc)
+            # YFinance 不支持 A 股（adjust=back/forward），不应用于 ashare
+            if adjust in ("back", "forward", "repaired"):
+                raise
             from .yfinance_source import YFinanceDataSource
 
             yf_ds = YFinanceDataSource(self.config, self.rate_limiter, self.catalog)

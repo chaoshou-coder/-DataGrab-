@@ -1111,6 +1111,7 @@ def _run_download(
 
     if selected_source == "auto":
         source.clear_source_override()
+        source.set_asset_type(cli_args.asset_type or "stock")
     elif selected_source == "yfinance":
         if yfinance_source is None:
             raise RuntimeError("yfinance source not initialized")
